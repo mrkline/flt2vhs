@@ -1,2 +1,10 @@
 [workspace]
 members = ["vhscat"]
+
+[profile.dev]
+opt-level = 2 # We want optimization even for debug builds for all the hashing.
+incremental = true # Iterate faster
+
+[profile.release]
+debug = true
+
