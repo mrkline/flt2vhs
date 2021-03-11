@@ -14,16 +14,16 @@ pub struct TapeHeader {
     pub file_size: u32,
     pub entity_count: i32,
     pub feature_count: i32,
-    pub entity_block_offset: u32,
-    pub feature_block_offset: u32,
-    pub timeline_count: i32,
-    pub timeline_block_offset: u32,
-    pub first_entity_event_offset: u32,
-    pub first_general_event_offset: u32,
-    pub first_event_trailer_offset: u32,
-    pub first_text_event_offset: u32,
-    pub first_feature_event_offset: u32,
-    pub event_count: i32,
+    pub entity_offset: u32,
+    pub feature_offset: u32,
+    pub position_count: i32,
+    pub position_offset: u32,
+    pub entity_event_offset: u32,
+    pub general_event_offset: u32,
+    pub general_event_trailer_offset: u32,
+    pub text_event_offset: u32,
+    pub feature_event_offset: u32,
+    pub general_event_count: i32,
     pub entity_event_count: i32,
     pub text_event_count: i32,
     pub feature_event_count: i32,
@@ -40,16 +40,16 @@ impl TapeHeader {
         let file_size = read_u32(r)?;
         let entity_count = read_i32(r)?;
         let feature_count = read_i32(r)?;
-        let entity_block_offset = read_u32(r)?;
-        let feature_block_offset = read_u32(r)?;
-        let timeline_count = read_i32(r)?;
-        let timeline_block_offset = read_u32(r)?;
-        let first_entity_event_offset = read_u32(r)?;
-        let first_general_event_offset = read_u32(r)?;
-        let first_event_trailer_offset = read_u32(r)?;
-        let first_text_event_offset = read_u32(r)?;
-        let first_feature_event_offset = read_u32(r)?;
-        let event_count = read_i32(r)?;
+        let entity_offset = read_u32(r)?;
+        let feature_offset = read_u32(r)?;
+        let position_count = read_i32(r)?;
+        let position_offset = read_u32(r)?;
+        let entity_event_offset = read_u32(r)?;
+        let general_event_offset = read_u32(r)?;
+        let general_event_trailer_offset = read_u32(r)?;
+        let text_event_offset = read_u32(r)?;
+        let feature_event_offset = read_u32(r)?;
+        let general_event_count = read_i32(r)?;
         let entity_event_count = read_i32(r)?;
         let text_event_count = read_i32(r)?;
         let feature_event_count = read_i32(r)?;
@@ -62,16 +62,16 @@ impl TapeHeader {
             file_size,
             entity_count,
             feature_count,
-            entity_block_offset,
-            feature_block_offset,
-            timeline_count,
-            timeline_block_offset,
-            first_entity_event_offset,
-            first_general_event_offset,
-            first_event_trailer_offset,
-            first_text_event_offset,
-            first_feature_event_offset,
-            event_count,
+            entity_offset,
+            feature_offset,
+            position_count,
+            position_offset,
+            entity_event_offset,
+            general_event_offset,
+            general_event_trailer_offset,
+            text_event_offset,
+            feature_event_offset,
+            general_event_count,
             entity_event_count,
             text_event_count,
             feature_event_count,
@@ -91,8 +91,8 @@ pub struct Entity {
     pub lead_index: i32,
     pub slot: i32,
     pub special_flags: u32,
-    pub first_position_data_offset: u32,
-    pub first_event_data_offset: u32,
+    pub first_position_offset: u32,
+    pub first_event_offset: u32,
 }
 
 impl Entity {
@@ -104,8 +104,8 @@ impl Entity {
         let lead_index = read_i32(r)?;
         let slot = read_i32(r)?;
         let special_flags = read_u32(r)?;
-        let first_position_data_offset = read_u32(r)?;
-        let first_event_data_offset = read_u32(r)?;
+        let first_position_offset = read_u32(r)?;
+        let first_event_offset = read_u32(r)?;
 
         Ok(Self {
             uid,
@@ -115,8 +115,8 @@ impl Entity {
             lead_index,
             slot,
             special_flags,
-            first_position_data_offset,
-            first_event_data_offset,
+            first_position_offset,
+            first_event_offset,
         })
     }
 }
@@ -125,8 +125,8 @@ impl Entity {
 pub struct TimelineEntry {
     pub time: f32,
     pub payload: TimelineEntryPayload,
-    pub next_position_update_offset: u32,
-    pub previous_position_update_offset: u32,
+    pub next_update_offset: u32,
+    pub previous_update_offset: u32,
 }
 
 impl TimelineEntry {
@@ -138,14 +138,14 @@ impl TimelineEntry {
             2 => TimelineEntryPayload::DOF(DOF::read(r)?),
             wut => bail!("Invalid timeline entry type: {}", wut),
         };
-        let next_position_update_offset = read_u32(r)?;
-        let previous_position_update_offset = read_u32(r)?;
+        let next_update_offset = read_u32(r)?;
+        let previous_update_offset = read_u32(r)?;
 
         Ok(Self {
             time,
             payload,
-            next_position_update_offset,
-            previous_position_update_offset,
+            next_update_offset,
+            previous_update_offset,
         })
     }
 }
@@ -238,18 +238,8 @@ impl DOF {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct RawPosition {
-    pub kind: i32,
-    pub uid: i32,
-    pub flags: i32,
-    pub lead_index: i32,
-    pub slot: i32,
-    pub special_flags: i32,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct EventHeader {
+#[derive(Debug, Copy, Clone, Serialize)]
+pub struct GeneralEventHeader {
     pub event_type: u8,
     pub index: i32,
     pub time: f32,
@@ -269,34 +259,101 @@ pub struct EventHeader {
     pub yaw: f32,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct EventTrailer {
+impl GeneralEventHeader {
+    pub fn read<R: Read + Seek>(r: &mut R) -> Result<Self> {
+        let event_type = read_u8(r)?;
+        let index = read_i32(r)?;
+        let time = read_f32(r)?;
+        let time_end = read_f32(r)?;
+        let kind = read_i32(r)?;
+        let user = read_i32(r)?;
+        let flags = read_i32(r)?;
+        let scale = read_f32(r)?;
+        let x = read_f32(r)?;
+        let y = read_f32(r)?;
+        let z = read_f32(r)?;
+        let dx = read_f32(r)?;
+        let dy = read_f32(r)?;
+        let dz = read_f32(r)?;
+        let roll = read_f32(r)?;
+        let pitch = read_f32(r)?;
+        let yaw = read_f32(r)?;
+
+        Ok(Self {
+            event_type,
+            index,
+            time,
+            time_end,
+            kind,
+            user,
+            flags,
+            scale,
+            x,
+            y,
+            z,
+            dx,
+            dy,
+            dz,
+            roll,
+            pitch,
+            yaw,
+        })
+    }
+}
+
+#[derive(Debug, Copy, Clone, Serialize)]
+pub struct GeneralEventTrailer {
     pub time_end: f32,
     pub index: i32,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct FeatEvent {
+impl GeneralEventTrailer {
+    pub fn read<R: Read + Seek>(r: &mut R) -> Result<Self> {
+        let time_end = read_f32(r)?;
+        let index = read_i32(r)?;
+
+        Ok(Self { time_end, index })
+    }
+}
+
+#[derive(Debug, Copy, Clone, Serialize)]
+pub struct FeatureEvent {
     pub time: f32,
     pub index: i32,
     pub new_status: i32,
-    pub prevous_status: i32,
+    pub previous_status: i32,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct FeatEventImport {
-    pub unique_id: i32,
-    pub data: FeatEvent,
+impl FeatureEvent {
+    pub fn read<R: Read>(r: &mut R) -> Result<Self> {
+        let time = read_f32(r)?;
+        let index = read_i32(r)?;
+        let new_status = read_i32(r)?;
+        let previous_status = read_i32(r)?;
+
+        Ok(Self {
+            time,
+            index,
+            new_status,
+            previous_status,
+        })
+    }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct EntityReadHead {
-    pub position_offset: u32,
-    pub event_offset: u32,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct CallRec {
-    pub label: [u8; 16usize],
+#[derive(Debug, Clone, Serialize)]
+pub struct CallsignRecord {
+    pub label: String,
     pub team_color: i32,
+}
+
+impl CallsignRecord {
+    pub fn read<R: Read>(r: &mut R) -> Result<Self> {
+        let mut label_bytes: [u8; 16] = [0; 16];
+        r.read_exact(&mut label_bytes)?;
+
+        let label_len = label_bytes.iter().position(|c| *c == 0).unwrap_or(16);
+        let label = String::from_utf8_lossy(&label_bytes[0..label_len]).to_string();
+        let team_color = read_i32(r)?;
+        Ok(Self { label, team_color })
+    }
 }
