@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io;
 use std::io::prelude::*;
 
@@ -13,8 +13,8 @@ pub struct Flight {
     pub corrupted: bool,
     pub callsigns: Vec<CallsignRecord>,
     pub tod_offset: f32,
-    pub entities: BTreeMap<i32, EntityData>,
-    pub features: BTreeMap<i32, FeatureData>,
+    pub entities: HashMap<i32, EntityData>,
+    pub features: HashMap<i32, FeatureData>,
     pub general_events: Vec<GeneralEvent>,
 }
 
@@ -85,12 +85,19 @@ pub struct DofEvent {
     pub previous_dof_value: f32,
 }
 
+/// Data gleaned from the entity's first position record.
+/// (Contains things besides the position)
 #[derive(Debug, Clone)]
-pub struct EntityData {
+pub struct EntityPositionData {
     pub kind: i32,
     /// Stores The type of entity (see `ENTITY_FLAG_...`)
     pub flags: u32,
     position_updates: Vec<PositionUpdate>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EntityData {
+    position_data: Option<EntityPositionData>,
     events: Vec<EntityEvent>,
 }
 
@@ -101,13 +108,20 @@ pub struct FeatureEvent {
     pub previous_status: i32,
 }
 
-#[derive(Debug, Clone)]
-pub struct FeatureData {
+/// Data gleaned from the feature's first (and hopefully only)
+/// position record.  (Contains things besides the position)
+#[derive(Debug, Copy, Clone)]
+pub struct FeaturePositionData {
     pub kind: i32,
     pub lead_uid: i32,
     pub slot: i32,
     pub special_flags: u32,
-    pub position_updates: Vec<PositionUpdate>,
+    pub position: PositionUpdate,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FeatureData {
+    pub position_data: Option<FeaturePositionData>,
     pub events: Vec<FeatureEvent>,
 }
 
@@ -184,25 +198,34 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             let entity_data = flight
                 .entities
                 .entry(record.uid)
-                .or_insert_with(|| EntityData {
+                .or_insert_with(Default::default);
+
+            if let Some(posit_data) = &entity_data.position_data {
+                if posit_data.kind != record.kind {
+                    warn!(
+                        "Position update for entity {} switched kinds from {} to {}",
+                        record.uid, posit_data.kind, record.kind
+                    );
+                }
+
+                if posit_data.flags != flags {
+                    warn!(
+                        "Position update for entity {} switched flags from {} to {}",
+                        record.uid, posit_data.flags, flags
+                    );
+                }
+            } else {
+                trace!(
+                    "New entity {}: kind {}, flags {}",
+                    record.uid,
+                    record.kind,
+                    flags
+                );
+                entity_data.position_data = Some(EntityPositionData {
                     kind: record.kind,
                     flags,
                     position_updates: Vec::new(),
-                    events: Vec::new(),
                 });
-
-            if entity_data.kind != record.kind {
-                warn!(
-                    "Position update for entity {} switched kinds from {} to {}",
-                    record.uid, entity_data.kind, record.kind
-                );
-            }
-
-            if entity_data.flags != flags {
-                warn!(
-                    "Position update for entity {} switched flags from {} to {}",
-                    record.uid, entity_data.flags, flags
-                );
             }
 
             let posit_update = PositionUpdate {
@@ -216,7 +239,12 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 radar_target,
             };
             trace!("Entity {} position update: {:?}", record.uid, posit_update);
-            entity_data.position_updates.push(posit_update);
+            entity_data
+                .position_data
+                .as_mut()
+                .unwrap()
+                .position_updates
+                .push(posit_update);
         }
         REC_TYPE_FEATURE_POSITION => {
             let record = FeaturePositionRecord::parse(r)?;
@@ -225,27 +253,34 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             let feature_data = flight
                 .features
                 .entry(record.uid)
-                .or_insert_with(|| FeatureData {
+                .or_insert_with(Default::default);
+
+            if feature_data.position_data.is_some() {
+                warn!(
+                    "Feature {} got multiple positions; using the first",
+                    record.uid
+                );
+            } else {
+                let position = PositionUpdate {
+                    time,
+                    x: record.x,
+                    y: record.y,
+                    z: record.z,
+                    pitch: record.pitch,
+                    roll: record.roll,
+                    yaw: record.yaw,
+                    radar_target,
+                };
+                let position_data = FeaturePositionData {
                     kind: record.kind,
                     lead_uid: record.lead_uid,
                     slot: record.slot,
                     special_flags: record.special_flags,
-                    events: Vec::new(),
-                    position_updates: Vec::new(),
-                });
-
-            let posit_update = PositionUpdate {
-                time,
-                x: record.x,
-                y: record.y,
-                z: record.z,
-                pitch: record.pitch,
-                roll: record.roll,
-                yaw: record.yaw,
-                radar_target,
-            };
-            trace!("Feature {} position : {:?}", record.uid, posit_update);
-            feature_data.position_updates.push(posit_update);
+                    position,
+                };
+                trace!("New feature {}: {:?}", record.uid, position_data);
+                feature_data.position_data = Some(position_data);
+            }
         }
         REC_TYPE_TRACER_START => {
             let record = TracerStartRecord::parse(r)?;
@@ -305,8 +340,8 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             let record = SwitchRecord::parse(r)?;
             let entity = flight
                 .entities
-                .get_mut(&record.uid)
-                .ok_or_else(|| anyhow!("Couldn't find entity {} to add an event", record.uid))?;
+                .entry(record.uid)
+                .or_insert_with(Default::default);
 
             let payload = EntityEventPayload::SwitchEvent(SwitchEvent {
                 switch_number: record.switch_number,
@@ -326,8 +361,8 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             let record = DofRecord::parse(r)?;
             let entity = flight
                 .entities
-                .get_mut(&record.uid)
-                .ok_or_else(|| anyhow!("Couldn't find entity {} to add an event", record.uid))?;
+                .entry(record.uid)
+                .or_insert_with(Default::default);
 
             let payload = EntityEventPayload::DofEvent(DofEvent {
                 dof_number: record.dof_number,

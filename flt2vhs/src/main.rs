@@ -1,8 +1,10 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::*;
 use log::*;
+use rayon::prelude::*;
 use simplelog::*;
 use structopt::StructOpt;
 
@@ -27,16 +29,32 @@ struct Args {
     input: PathBuf,
 }
 
+fn print_timing(msg: &str, start: &Instant) {
+    info!("{} took {:2.4}s", msg, start.elapsed().as_secs_f32());
+}
+
 fn main() -> Result<()> {
+    let start_time = Instant::now();
+
     let args = Args::from_args();
     init_logger(args.verbose, args.timestamps)?;
     let mapping = open_file(&args.input)?;
 
+    let parse_start = Instant::now();
     let parsed_flight = flt::Flight::parse(&*mapping);
+    print_timing("Parsing", &parse_start);
     if parsed_flight.corrupted {
         warn!("Flight file is corrupted! Doing what we can with what we have...");
     }
 
+    let sort_start = Instant::now();
+    let mut entity_uids = parsed_flight.entities.keys().collect::<Vec<_>>();
+    entity_uids.par_sort();
+    let mut feature_uids = parsed_flight.features.keys().collect::<Vec<_>>();
+    feature_uids.par_sort();
+    print_timing("Sorting UIDs", &sort_start);
+
+    print_timing("Entire operation", &start_time);
     if parsed_flight.corrupted {
         warn!("Converted corrupted FLT file, resulting VHS may be incomplete");
         std::process::exit(2); // Use a different error code than normal failure
