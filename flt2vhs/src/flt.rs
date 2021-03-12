@@ -40,7 +40,7 @@ impl Flight {
 }
 
 const ENTITY_FLAG_MISSILE: u32 = 0x00000001;
-const ENTITY_FLAG_FEATURE: u32 = 0x00000002;
+pub const ENTITY_FLAG_FEATURE: u32 = 0x00000002;
 const ENTITY_FLAG_AIRCRAFT: u32 = 0x00000004;
 const ENTITY_FLAG_CHAFF: u32 = 0x00000008;
 const ENTITY_FLAG_FLARE: u32 = 0x00000010;
@@ -302,6 +302,27 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             flight.general_events.push(event);
         }
         REC_TYPE_SWITCH => {
+            let record = SwitchRecord::parse(r)?;
+            let entity = flight
+                .entities
+                .get_mut(&record.uid)
+                .ok_or_else(|| anyhow!("Couldn't find entity {} to add an event", record.uid))?;
+
+            let payload = EntityEventPayload::SwitchEvent(SwitchEvent {
+                switch_number: record.switch_number,
+                new_switch_value: record.new_switch_value,
+                previous_switch_value: record.previous_switch_value,
+            });
+
+            let event = EntityEvent {
+                time,
+                kind: record.kind,
+                payload,
+            };
+            trace!("Entity {} event: {:?}", record.uid, event);
+            entity.events.push(event);
+        }
+        REC_TYPE_DOF => {
             let record = DofRecord::parse(r)?;
             let entity = flight
                 .entities
@@ -322,7 +343,6 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             trace!("Entity {} event: {:?}", record.uid, event);
             entity.events.push(event);
         }
-        REC_TYPE_DOF => {}
         REC_TYPE_TOD_OFFSET => flight.tod_offset = time,
         REC_TYPE_FEATURE_STATUS => {
             let record = FeatureEventRecord::read(r)?;
@@ -571,7 +591,7 @@ struct SwitchRecord {
 }
 
 impl SwitchRecord {
-    fn read<R: Read>(r: &mut R) -> Result<Self> {
+    fn parse<R: Read>(r: &mut R) -> Result<Self> {
         let kind = read_i32(r)?;
         let uid = read_i32(r)?;
         let switch_number = read_i32(r)?;
