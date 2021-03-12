@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::io;
 use std::io::prelude::*;
@@ -14,8 +13,8 @@ pub struct Flight {
     pub corrupted: bool,
     pub callsigns: Vec<CallsignRecord>,
     pub tod_offset: f32,
-    pub entities: BTreeMap<Entity, EntityUpdates>,
-    pub features: BTreeMap<Entity, FeatureUpdates>,
+    pub entities: BTreeMap<i32, EntityData>,
+    pub features: BTreeMap<i32, FeatureData>,
     pub general_events: Vec<GeneralEvent>,
 }
 
@@ -46,32 +45,6 @@ const ENTITY_FLAG_AIRCRAFT: u32 = 0x00000004;
 const ENTITY_FLAG_CHAFF: u32 = 0x00000008;
 const ENTITY_FLAG_FLARE: u32 = 0x00000010;
 
-#[derive(Debug, Copy, Clone, Default)]
-pub struct Entity {
-    pub uid: i32,
-    pub kind: i32,
-    pub flags: u32,
-}
-
-impl PartialEq for Entity {
-    fn eq(&self, other: &Self) -> bool {
-        self.uid == other.uid
-    }
-}
-impl Eq for Entity {}
-
-impl Ord for Entity {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.uid.cmp(&other.uid)
-    }
-}
-
-impl PartialOrd for Entity {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub struct PositionUpdate {
     pub time: f32,
@@ -86,10 +59,37 @@ pub struct PositionUpdate {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct EntityEvent {}
+pub struct EntityEvent {
+    pub time: f32,
+    pub kind: i32,
+    pub payload: EntityEventPayload,
+}
 
-#[derive(Debug, Clone, Default)]
-pub struct EntityUpdates {
+#[derive(Debug, Copy, Clone)]
+pub enum EntityEventPayload {
+    SwitchEvent(SwitchEvent),
+    DofEvent(DofEvent),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct SwitchEvent {
+    pub switch_number: i32,
+    pub new_switch_value: i32,
+    pub previous_switch_value: i32,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct DofEvent {
+    pub dof_number: i32,
+    pub new_dof_value: f32,
+    pub previous_dof_value: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityData {
+    pub kind: i32,
+    /// Stores The type of entity (see `ENTITY_FLAG_...`)
+    pub flags: u32,
     position_updates: Vec<PositionUpdate>,
     events: Vec<EntityEvent>,
 }
@@ -101,10 +101,14 @@ pub struct FeatureEvent {
     pub previous_status: i32,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct FeatureUpdates {
-    position_updates: Vec<PositionUpdate>,
-    events: Vec<FeatureEvent>,
+#[derive(Debug, Clone)]
+pub struct FeatureData {
+    pub kind: i32,
+    pub lead_uid: i32,
+    pub slot: i32,
+    pub special_flags: u32,
+    pub position_updates: Vec<PositionUpdate>,
+    pub events: Vec<FeatureEvent>,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -113,6 +117,8 @@ pub struct GeneralEvent {
     pub start: f32,
     pub stop: f32,
     pub kind: i32,
+    pub user: i32,
+    pub flags: u32,
     pub scale: f32,
     pub x: f32,
     pub y: f32,
@@ -175,15 +181,29 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 REC_TYPE_FLARE_POSITION => ENTITY_FLAG_FLARE,
                 _ => unreachable!(),
             };
-            let entity = Entity {
-                uid: record.uid,
-                kind: record.kind,
-                flags,
-            };
-            let updates = flight
+            let entity_data = flight
                 .entities
-                .entry(entity)
-                .or_insert_with(Default::default);
+                .entry(record.uid)
+                .or_insert_with(|| EntityData {
+                    kind: record.kind,
+                    flags,
+                    position_updates: Vec::new(),
+                    events: Vec::new(),
+                });
+
+            if entity_data.kind != record.kind {
+                warn!(
+                    "Position update for entity {} switched kinds from {} to {}",
+                    record.uid, entity_data.kind, record.kind
+                );
+            }
+
+            if entity_data.flags != flags {
+                warn!(
+                    "Position update for entity {} switched flags from {} to {}",
+                    record.uid, entity_data.flags, flags
+                );
+            }
 
             let posit_update = PositionUpdate {
                 time,
@@ -195,23 +215,24 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 yaw: record.yaw,
                 radar_target,
             };
-            trace!("Entity {:?} position update: {:?}", entity, posit_update);
-            updates.position_updates.push(posit_update);
+            trace!("Entity {} position update: {:?}", record.uid, posit_update);
+            entity_data.position_updates.push(posit_update);
         }
         REC_TYPE_FEATURE_POSITION => {
-            let record = PositionRecord::parse(r)?;
+            let record = FeaturePositionRecord::parse(r)?;
             let radar_target = -1; // Should this be 0 to match acmi-compiler?
-            let flags = ENTITY_FLAG_FEATURE;
 
-            let feature = Entity {
-                uid: record.uid,
-                kind: record.kind,
-                flags,
-            };
-            let updates = flight
+            let feature_data = flight
                 .features
-                .entry(feature)
-                .or_insert_with(Default::default);
+                .entry(record.uid)
+                .or_insert_with(|| FeatureData {
+                    kind: record.kind,
+                    lead_uid: record.lead_uid,
+                    slot: record.slot,
+                    special_flags: record.special_flags,
+                    events: Vec::new(),
+                    position_updates: Vec::new(),
+                });
 
             let posit_update = PositionUpdate {
                 time,
@@ -223,8 +244,8 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 yaw: record.yaw,
                 radar_target,
             };
-            trace!("Feature {:?} position update: {:?}", feature, posit_update);
-            updates.position_updates.push(posit_update);
+            trace!("Feature {} position : {:?}", record.uid, posit_update);
+            feature_data.position_updates.push(posit_update);
         }
         REC_TYPE_TRACER_START => {
             let record = TracerStartRecord::parse(r)?;
@@ -241,6 +262,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 ..Default::default()
             };
             trace!("Tracer start: {:?}", event);
+            flight.general_events.push(event);
         }
         REC_TYPE_STATIONARY_SFX => {
             let record = StationarySoundRecord::parse(r)?;
@@ -256,29 +278,65 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 ..Default::default()
             };
             trace!("Stationary sound: {:?}", event);
+            flight.general_events.push(event);
         }
-        REC_TYPE_MOVING_SFX => {}
-        REC_TYPE_SWITCH => {}
+        REC_TYPE_MOVING_SFX => {
+            let record = MovingSoundRecord::parse(r)?;
+            let event = GeneralEvent {
+                type_byte,
+                start: time,
+                stop: time + record.ttl,
+                kind: record.kind,
+                user: record.user,
+                flags: record.flags,
+                x: record.x,
+                y: record.y,
+                z: record.z,
+                dx: record.dx,
+                dy: record.dy,
+                dz: record.dz,
+                scale: record.scale,
+                ..Default::default()
+            };
+            trace!("Moving sound: {:?}", event);
+            flight.general_events.push(event);
+        }
+        REC_TYPE_SWITCH => {
+            let record = DofRecord::parse(r)?;
+            let entity = flight
+                .entities
+                .get_mut(&record.uid)
+                .ok_or_else(|| anyhow!("Couldn't find entity {} to add an event", record.uid))?;
+
+            let payload = EntityEventPayload::DofEvent(DofEvent {
+                dof_number: record.dof_number,
+                new_dof_value: record.new_dof_value,
+                previous_dof_value: record.previous_dof_value,
+            });
+
+            let event = EntityEvent {
+                time,
+                kind: record.kind,
+                payload,
+            };
+            trace!("Entity {} event: {:?}", record.uid, event);
+            entity.events.push(event);
+        }
         REC_TYPE_DOF => {}
         REC_TYPE_TOD_OFFSET => flight.tod_offset = time,
         REC_TYPE_FEATURE_STATUS => {
             let record = FeatureEventRecord::read(r)?;
             // Look up the feature by its UID
-            let lookup = Entity {
-                uid: record.uid,
-                kind: -1,
-                flags: 0,
-            };
             let feature = flight
                 .features
-                .get_mut(&lookup)
+                .get_mut(&record.uid)
                 .ok_or_else(|| anyhow!("Couldn't find feature {} to add an event", record.uid))?;
             let event = FeatureEvent {
                 time,
                 new_status: record.new_status,
                 previous_status: record.previous_status,
             };
-            trace!("Feature {:?} event: {:?}", record.uid, event);
+            trace!("Feature {} event: {:?}", record.uid, event);
             feature.events.push(event);
         }
         REC_TYPE_CALLSIGN_LIST => flight.callsigns = parse_callsigns(r)?,
@@ -335,6 +393,49 @@ impl PositionRecord {
     }
 }
 
+struct FeaturePositionRecord {
+    kind: i32,
+    uid: i32,
+    lead_uid: i32,
+    slot: i32,
+    special_flags: u32,
+    x: f32,
+    y: f32,
+    z: f32,
+    yaw: f32,
+    pitch: f32,
+    roll: f32,
+}
+
+impl FeaturePositionRecord {
+    fn parse<R: Read>(r: &mut R) -> Result<Self> {
+        let kind = read_i32(r)?;
+        let uid = read_i32(r)?;
+        let lead_uid = read_i32(r)?;
+        let slot = read_i32(r)?;
+        let special_flags = read_u32(r)?;
+        let x = read_f32(r)?;
+        let y = read_f32(r)?;
+        let z = read_f32(r)?;
+        let yaw = read_f32(r)?;
+        let pitch = read_f32(r)?;
+        let roll = read_f32(r)?;
+
+        Ok(Self {
+            kind,
+            uid,
+            lead_uid,
+            slot,
+            special_flags,
+            x,
+            y,
+            z,
+            yaw,
+            pitch,
+            roll,
+        })
+    }
+}
 #[derive(Debug)]
 struct TracerStartRecord {
     x: f32,
@@ -396,6 +497,51 @@ impl StationarySoundRecord {
 }
 
 #[derive(Debug)]
+struct MovingSoundRecord {
+    kind: i32,
+    user: i32,
+    flags: u32,
+    x: f32,
+    y: f32,
+    z: f32,
+    dx: f32,
+    dy: f32,
+    dz: f32,
+    ttl: f32,
+    scale: f32,
+}
+
+impl MovingSoundRecord {
+    fn parse<R: Read>(r: &mut R) -> Result<Self> {
+        let kind = read_i32(r)?;
+        let user = read_i32(r)?;
+        let flags = read_u32(r)?;
+        let x = read_f32(r)?;
+        let y = read_f32(r)?;
+        let z = read_f32(r)?;
+        let dx = read_f32(r)?;
+        let dy = read_f32(r)?;
+        let dz = read_f32(r)?;
+        let ttl = read_f32(r)?;
+        let scale = read_f32(r)?;
+
+        Ok(Self {
+            kind,
+            user,
+            flags,
+            x,
+            y,
+            z,
+            dx,
+            dy,
+            dz,
+            ttl,
+            scale,
+        })
+    }
+}
+
+#[derive(Debug)]
 struct FeatureEventRecord {
     uid: i32,
     new_status: i32,
@@ -411,6 +557,60 @@ impl FeatureEventRecord {
             uid,
             new_status,
             previous_status,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct SwitchRecord {
+    kind: i32,
+    uid: i32,
+    switch_number: i32,
+    new_switch_value: i32,
+    previous_switch_value: i32,
+}
+
+impl SwitchRecord {
+    fn read<R: Read>(r: &mut R) -> Result<Self> {
+        let kind = read_i32(r)?;
+        let uid = read_i32(r)?;
+        let switch_number = read_i32(r)?;
+        let new_switch_value = read_i32(r)?;
+        let previous_switch_value = read_i32(r)?;
+
+        Ok(Self {
+            kind,
+            uid,
+            switch_number,
+            new_switch_value,
+            previous_switch_value,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct DofRecord {
+    kind: i32,
+    uid: i32,
+    dof_number: i32,
+    new_dof_value: f32,
+    previous_dof_value: f32,
+}
+
+impl DofRecord {
+    fn parse<R: Read>(r: &mut R) -> Result<Self> {
+        let kind = read_i32(r)?;
+        let uid = read_i32(r)?;
+        let dof_number = read_i32(r)?;
+        let new_dof_value = read_f32(r)?;
+        let previous_dof_value = read_f32(r)?;
+
+        Ok(Self {
+            kind,
+            uid,
+            dof_number,
+            new_dof_value,
+            previous_dof_value,
         })
     }
 }
