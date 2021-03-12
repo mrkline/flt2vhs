@@ -13,6 +13,10 @@ mod read_primitives;
 
 use crate::acmitape::*;
 
+/// Reads a .VHS file to JSON
+///
+/// Each data structure on the file is printed on its own line for easy diffing
+/// against other VHS files. Pipe into `jq` to pretty-print.
 #[derive(Debug, StructOpt)]
 #[structopt(verbatim_doc_comment)]
 struct Args {
@@ -20,11 +24,12 @@ struct Args {
     #[structopt(short, long, parse(from_occurrences))]
     verbose: u8,
 
-    /// Prepend ISO-8601 timestamps to all trace messages (from --verbose).
-    /// Useful for benchmarking.
-    #[structopt(short, long)]
+    /// Prepend ISO-8601 timestamps to all trace messages
+    /// (from --verbose). Useful for benchmarking.
+    #[structopt(short, long, verbatim_doc_comment)]
     timestamps: bool,
 
+    /// The .VHS file to read
     #[structopt(short, long)]
     input: PathBuf,
 }
@@ -32,8 +37,7 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::from_args();
     init_logger(args.verbose, args.timestamps)?;
-    read_flt(&args.input)?;
-
+    read_vhs(&args.input)?;
     Ok(())
 }
 
@@ -71,10 +75,39 @@ fn init_logger(verbosity: u8, timestamps: bool) -> Result<()> {
 
 fn get_posit<S: Seek>(s: &mut S) -> u32 {
     s.seek(io::SeekFrom::Current(0))
-        .expect("Couldn't get current stream posit") as u32
+        .expect("Couldn't get current stream position") as u32
 }
 
-fn read_flt(input: &Path) -> Result<()> {
+/// Read (and print) the .VHS file
+///
+/// VHS files have a few sections:
+///
+/// 1. A header with some magic bytes, offsets into other sections of the file,
+///    flight time of day, etc.
+///
+/// 2. A list of entities - planes, etc. which move around the world
+///
+/// 3. A list of "features" which get an initial position and then stay there.
+///
+/// 4. A lits of position updates for entities and features (each feature has one).
+///    Updates don't contain the UID of the entity or feature they apply to.
+///    Instead, each entity & feature has a "head" offset that points to their
+///    first update, and each update had a "previous" and "next" offset, forming
+///    a doubly-linked list of updates for each entity & feature.
+///
+/// 5. A lists of non-position "events" for entities (switch & DOF changes),
+///    similarly chained in doubly-linked lists
+///
+/// 6. A list of "general" events, split into two parts:
+///    - Event "Headers" with most of the data (position, orientation, velocity,
+///      scale, flags...)
+///    - Event "trailers" sorted chronologically by timestamp with the index
+///      of their corresponding header
+///
+/// 7. Feature events containing a feature index, a timestamp, and a state change
+///
+/// 8. A set of calligns and team colors.
+fn read_vhs(input: &Path) -> Result<()> {
     let mut fh = io::BufReader::new(
         File::open(input).with_context(|| format!("Couldn't open {}", input.display()))?,
     );
@@ -82,6 +115,20 @@ fn read_flt(input: &Path) -> Result<()> {
 
     println!("{{");
 
+    let header = read_header(fh)?;
+    read_entities(&header, fh)?;
+    read_features(&header, fh)?;
+    read_position_updates(&header, fh)?;
+    read_entity_events(&header, fh)?;
+    read_general_events(&header, fh)?;
+    read_feature_events(&header, fh)?;
+    read_callsigns(&header, fh)?;
+
+    println!("\n}}");
+    Ok(())
+}
+
+fn read_header(fh: &mut io::BufReader<File>) -> Result<TapeHeader> {
     let header = TapeHeader::read(fh)?;
     if &header.file_id != b"EPAT" {
         warn!(
@@ -102,17 +149,7 @@ fn read_flt(input: &Path) -> Result<()> {
     print!("\"header\": ");
     serde_json::to_writer(&io::stdout(), &header)?;
     println!(",");
-
-    read_entities(&header, fh)?;
-    read_features(&header, fh)?;
-    read_position_updates(&header, fh)?;
-    read_entity_events(&header, fh)?;
-    read_general_events(&header, fh)?;
-    read_feature_events(&header, fh)?;
-    read_callsigns(&header, fh)?;
-
-    println!("\n}}");
-    Ok(())
+    Ok(header)
 }
 
 fn read_entities(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()> {
@@ -131,7 +168,6 @@ fn read_entities(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()
     println!("\"entities\": [");
     for i in 0..header.entity_count {
         let entity = Entity::read(fh)?;
-
         serde_json::to_writer(&io::stdout(), &entity)?;
         println!("{}", if i < header.entity_count - 1 { "," } else { "" });
     }
@@ -324,6 +360,9 @@ fn read_callsigns(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<(
         posit
     );
 
+    // For reasons I don't understand, the callsign count is saved
+    // in four bytes preceding the block instead of as `text_event_count`
+    // in the file header.
     let callsign_count = read_primitives::read_i32(fh)?;
     ensure!(
         callsign_count >= 0,
