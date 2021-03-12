@@ -15,7 +15,7 @@ pub struct Flight {
     pub callsigns: Vec<CallsignRecord>,
     pub tod_offset: f32,
     pub entities: BTreeMap<Entity, EntityUpdates>,
-    pub features: BTreeMap<Entity, EntityUpdates>,
+    pub features: BTreeMap<Entity, FeatureUpdates>,
     pub general_events: Vec<GeneralEvent>,
 }
 
@@ -94,12 +94,26 @@ pub struct EntityUpdates {
     events: Vec<EntityEvent>,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct FeatureEvent {
+    pub time: f32,
+    pub new_status: i32,
+    pub previous_status: i32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FeatureUpdates {
+    position_updates: Vec<PositionUpdate>,
+    events: Vec<FeatureEvent>,
+}
+
 #[derive(Debug, Copy, Clone, Default)]
 pub struct GeneralEvent {
     pub type_byte: u8,
     pub start: f32,
     pub stop: f32,
     pub kind: i32,
+    pub scale: f32,
     pub x: f32,
     pub y: f32,
     pub z: f32,
@@ -111,7 +125,7 @@ pub struct GeneralEvent {
     pub yaw: f32,
 }
 
-const REC_TYPE_GENERAL_POSITION: u8 = 0;
+pub const REC_TYPE_GENERAL_POSITION: u8 = 0;
 const REC_TYPE_MISSILE_POSITION: u8 = 1;
 const REC_TYPE_FEATURE_POSITION: u8 = 2;
 const REC_TYPE_AIRCRAFT_POSITION: u8 = 3;
@@ -218,25 +232,55 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 type_byte,
                 start: time,
                 stop: time + 2.5, // Matches acmi-compiler
-                kind: 0,
                 x: record.x,
                 y: record.y,
                 z: record.z,
                 dx: record.dx,
                 dy: record.dy,
                 dz: record.dz,
-                roll: 0.0,
-                pitch: 0.0,
-                yaw: 0.0,
+                ..Default::default()
             };
             trace!("Tracer start: {:?}", event);
         }
-        REC_TYPE_STATIONARY_SFX => {}
+        REC_TYPE_STATIONARY_SFX => {
+            let record = StationarySoundRecord::parse(r)?;
+            let event = GeneralEvent {
+                type_byte,
+                start: time,
+                stop: time + record.ttl,
+                kind: record.kind,
+                x: record.x,
+                y: record.y,
+                z: record.z,
+                scale: record.scale,
+                ..Default::default()
+            };
+            trace!("Stationary sound: {:?}", event);
+        }
         REC_TYPE_MOVING_SFX => {}
         REC_TYPE_SWITCH => {}
         REC_TYPE_DOF => {}
         REC_TYPE_TOD_OFFSET => flight.tod_offset = time,
-        REC_TYPE_FEATURE_STATUS => {}
+        REC_TYPE_FEATURE_STATUS => {
+            let record = FeatureEventRecord::read(r)?;
+            // Look up the feature by its UID
+            let lookup = Entity {
+                uid: record.uid,
+                kind: -1,
+                flags: 0,
+            };
+            let feature = flight
+                .features
+                .get_mut(&lookup)
+                .ok_or_else(|| anyhow!("Couldn't find feature {} to add an event", record.uid))?;
+            let event = FeatureEvent {
+                time,
+                new_status: record.new_status,
+                previous_status: record.previous_status,
+            };
+            trace!("Feature {:?} event: {:?}", record.uid, event);
+            feature.events.push(event);
+        }
         REC_TYPE_CALLSIGN_LIST => flight.callsigns = parse_callsigns(r)?,
         wut => {
             bail!("Unknown enity type {} (0-13 are valid)", wut);
@@ -255,6 +299,7 @@ fn warn_on(e: Error) {
     warn!("Error reading flight: {}", e);
 }
 
+#[derive(Debug)]
 struct PositionRecord {
     kind: i32,
     uid: i32,
@@ -290,6 +335,7 @@ impl PositionRecord {
     }
 }
 
+#[derive(Debug)]
 struct TracerStartRecord {
     x: f32,
     y: f32,
@@ -319,6 +365,56 @@ impl TracerStartRecord {
     }
 }
 
+#[derive(Debug)]
+struct StationarySoundRecord {
+    kind: i32,
+    x: f32,
+    y: f32,
+    z: f32,
+    ttl: f32,
+    scale: f32,
+}
+
+impl StationarySoundRecord {
+    fn parse<R: Read>(r: &mut R) -> Result<Self> {
+        let kind = read_i32(r)?;
+        let x = read_f32(r)?;
+        let y = read_f32(r)?;
+        let z = read_f32(r)?;
+        let ttl = read_f32(r)?;
+        let scale = read_f32(r)?;
+
+        Ok(Self {
+            kind,
+            x,
+            y,
+            z,
+            ttl,
+            scale,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct FeatureEventRecord {
+    uid: i32,
+    new_status: i32,
+    previous_status: i32,
+}
+
+impl FeatureEventRecord {
+    fn read<R: Read>(r: &mut R) -> Result<Self> {
+        let uid = read_i32(r)?;
+        let new_status = read_i32(r)?;
+        let previous_status = read_i32(r)?;
+        Ok(Self {
+            uid,
+            new_status,
+            previous_status,
+        })
+    }
+}
+
 fn parse_callsigns<R: Read>(r: &mut R) -> Result<Vec<CallsignRecord>> {
     let callsign_count = read_i32(r)?;
     ensure!(
@@ -335,7 +431,7 @@ fn parse_callsigns<R: Read>(r: &mut R) -> Result<Vec<CallsignRecord>> {
     Ok(callsigns)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct CallsignRecord {
     pub label: [u8; 16],
     pub team_color: i32,
