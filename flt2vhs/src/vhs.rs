@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::io;
 use std::io::prelude::*;
 use std::time::Instant;
 
@@ -18,17 +20,56 @@ const GENERAL_EVENT_TRAILER_SIZE: u32 = 8;
 const FEATURE_EVENT_SIZE: u32 = 16;
 const CALLSIGN_RECORD_SIZE: u32 = 20;
 
+struct CountedWrite<W> {
+    inner: W,
+    posit: u32, // Welcome to 1998, where files are always < 4 GB.
+}
+
+impl<W: Write> CountedWrite<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, posit: 0 }
+    }
+
+    fn get_posit(&self) -> u32 {
+        self.posit
+    }
+}
+
+impl<W: Write> Write for CountedWrite<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let res = self.inner.write(buf);
+        if let Ok(count) = res {
+            self.posit += count as u32;
+        }
+        res
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 pub fn write<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
     let sort_start = Instant::now();
-    let mut entity_uids = flight.entities.keys().collect::<Vec<_>>();
+    let mut entity_uids = flight.entities.keys().copied().collect::<Vec<_>>();
     entity_uids.par_sort();
-    let mut feature_uids = flight.features.keys().collect::<Vec<_>>();
+    let mut feature_uids = flight.features.keys().copied().collect::<Vec<_>>();
     feature_uids.par_sort();
     print_timing("Sorting UIDs", &sort_start);
 
+    let write_start = Instant::now();
+    let mut counted = CountedWrite::new(w);
+    let w = &mut counted;
+
     let header = Header::new(flight);
     header.write(flight, w)?;
+    assert_eq!(w.get_posit(), ENTITY_OFFSET);
 
+    write_entities(flight, &entity_uids, &header, w)?;
+    assert_eq!(w.get_posit(), header.feature_offset);
+
+    print_timing("VHS write", &write_start);
     Ok(())
 }
 
@@ -100,7 +141,7 @@ impl Header {
         let file_length =
             text_event_offset + 4 + CALLSIGN_RECORD_SIZE * flight.callsigns.len() as u32;
 
-        let offsets = Self {
+        Self {
             entity_count,
             feature_count,
             position_count,
@@ -114,8 +155,7 @@ impl Header {
             feature_event_offset,
             text_event_offset,
             file_length,
-        };
-        offsets
+        }
     }
 
     fn write<W: Write>(&self, flight: &Flight, w: &mut W) -> Result<()> {
@@ -186,4 +226,50 @@ impl Header {
 
         Ok(())
     }
+}
+
+fn write_entities<W: Write>(
+    flight: &Flight,
+    sorted_uids: &[i32],
+    header: &Header,
+    w: &mut W,
+) -> Result<()> {
+    let mut kind_indexes = HashMap::new();
+    let mut position_index = 0;
+    let mut event_index = 0;
+
+    for uid in sorted_uids {
+        let entity = flight.entities.get(uid).unwrap();
+        let data = entity.position_data.as_ref().unwrap();
+        write_i32(*uid, w)?;
+        write_i32(data.kind, w)?;
+
+        // For some reason (at least per the acmi compiler code), for each entity
+        // we store its index (starting at 1!?) out of all entities of the same kind.
+        let kind_index = kind_indexes.entry(data.kind).or_insert(1);
+        write_i32(*kind_index, w)?;
+        *kind_index += 1;
+
+        write_u32(data.flags, w)?;
+        // Lead index, slot, and special flags:
+        // all 0 for entities. Meaningful for features.
+        write_i32(0, w)?;
+        write_i32(0, w)?;
+        write_u32(0, w)?;
+
+        let first_position_offset = header.position_offset + ENTITY_UPDATE_SIZE * position_index;
+        write_u32(first_position_offset, w)?;
+
+        let first_event_offset = if entity.events.is_empty() {
+            0
+        } else {
+            header.entity_event_offset + ENTITY_UPDATE_SIZE * event_index
+        };
+        write_u32(first_event_offset, w)?;
+
+        position_index += data.position_updates.len() as u32;
+        event_index += entity.events.len() as u32;
+    }
+
+    Ok(())
 }
