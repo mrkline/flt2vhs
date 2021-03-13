@@ -27,8 +27,8 @@ pub struct TapeHeader {
     pub entity_event_count: i32,
     pub text_event_count: i32,
     pub feature_event_count: i32,
-    pub start_tim: f32,
-    pub tot_play_time: f32,
+    pub start_time: f32,
+    pub total_play_time: f32,
     pub tod_offset: f32,
 }
 
@@ -53,8 +53,8 @@ impl TapeHeader {
         let entity_event_count = read_i32(r)?;
         let text_event_count = read_i32(r)?;
         let feature_event_count = read_i32(r)?;
-        let start_tim = read_f32(r)?;
-        let tot_play_time = read_f32(r)?;
+        let start_time = read_f32(r)?;
+        let total_play_time = read_f32(r)?;
         let tod_offset = read_f32(r)?;
 
         Ok(Self {
@@ -75,8 +75,8 @@ impl TapeHeader {
             entity_event_count,
             text_event_count,
             feature_event_count,
-            start_tim,
-            tot_play_time,
+            start_time,
+            total_play_time,
             tod_offset,
         })
     }
