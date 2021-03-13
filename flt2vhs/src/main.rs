@@ -1,15 +1,18 @@
 use std::fs::File;
+use std::io;
+use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::*;
 use log::*;
-use rayon::prelude::*;
 use simplelog::*;
 use structopt::StructOpt;
 
 mod flt;
 mod read_primitives;
+mod vhs;
+mod write_primitives;
 
 /// Converts a .FLT file to .VHS
 #[derive(Debug, StructOpt)]
@@ -27,9 +30,13 @@ struct Args {
     /// The .FLT file to read
     #[structopt(short, long)]
     input: PathBuf,
+
+    /// The .VHS file to write
+    #[structopt(short, long)]
+    output: Option<PathBuf>,
 }
 
-fn print_timing(msg: &str, start: &Instant) {
+pub fn print_timing(msg: &str, start: &Instant) {
     info!("{} took {:2.4}s", msg, start.elapsed().as_secs_f32());
 }
 
@@ -38,7 +45,7 @@ fn main() -> Result<()> {
 
     let args = Args::from_args();
     init_logger(args.verbose, args.timestamps)?;
-    let mapping = open_file(&args.input)?;
+    let mapping = open_flt(&args.input)?;
 
     let parse_start = Instant::now();
     let parsed_flight = flt::Flight::parse(&*mapping);
@@ -47,12 +54,13 @@ fn main() -> Result<()> {
         warn!("Flight file is corrupted! Doing what we can with what we have...");
     }
 
-    let sort_start = Instant::now();
-    let mut entity_uids = parsed_flight.entities.keys().collect::<Vec<_>>();
-    entity_uids.par_sort();
-    let mut feature_uids = parsed_flight.features.keys().collect::<Vec<_>>();
-    feature_uids.par_sort();
-    print_timing("Sorting UIDs", &sort_start);
+    let default_output =
+        Path::new(args.input.file_name().expect("No file name")).with_extension("vhs");
+    let output = args.output.unwrap_or(default_output);
+    let mut vhs = open_vhs(&output)?;
+
+    vhs::write(&parsed_flight, &mut vhs)?;
+    vhs.flush()?;
 
     print_timing("Entire operation", &start_time);
     if parsed_flight.corrupted {
@@ -95,10 +103,16 @@ fn init_logger(verbosity: u8, timestamps: bool) -> Result<()> {
     }
 }
 
-fn open_file(f: &Path) -> Result<memmap::Mmap> {
+fn open_flt(f: &Path) -> Result<memmap::Mmap> {
     let fh = File::open(f).with_context(|| format!("Couldn't open {}", f.display()))?;
     let mapping = unsafe { memmap::Mmap::map(&fh)? };
     // An madvise(MADV_SEQUENTIAL) might be nice here
     // since we're not seeking around.
     Ok(mapping)
+}
+
+fn open_vhs(to: &Path) -> Result<io::BufWriter<File>> {
+    let fh =
+        File::create(to).with_context(|| format!("Couldn't open {} to write", to.display()))?;
+    Ok(io::BufWriter::new(fh))
 }

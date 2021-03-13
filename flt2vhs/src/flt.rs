@@ -11,8 +11,10 @@ use crate::read_primitives::*;
 #[derive(Debug, Clone, Default)]
 pub struct Flight {
     pub corrupted: bool,
-    pub callsigns: Vec<CallsignRecord>,
     pub tod_offset: f32,
+    pub start_time: f32,
+    pub end_time: f32,
+    pub callsigns: Vec<CallsignRecord>,
     pub entities: HashMap<i32, EntityData>,
     pub features: HashMap<i32, FeatureData>,
     pub general_events: Vec<GeneralEvent>,
@@ -21,6 +23,8 @@ pub struct Flight {
 impl Flight {
     pub fn parse<R: Read>(mut r: R) -> Self {
         let mut flight = Self {
+            start_time: f32::NEG_INFINITY,
+            end_time: f32::NEG_INFINITY,
             ..Default::default()
         };
 
@@ -35,6 +39,49 @@ impl Flight {
                 }
             }
         }
+
+        // Some entities get event, but never any position updates.
+        // Very strange, but let's throw them out since we can't do anything
+        // with events for a entity that was never defined.
+        let entities_to_chuck = flight
+            .entities
+            .iter()
+            .filter(|(_uid, data)| data.position_data.is_none())
+            .map(|(uid, data)| (*uid, data.events.len() as u32))
+            .collect::<Vec<(i32, u32)>>();
+        if !entities_to_chuck.is_empty() {
+            debug!(
+                "{} entities were never defined with position info, but have {} events",
+                entities_to_chuck.len(),
+                entities_to_chuck
+                    .iter()
+                    .fold(0, |acc, (_uid, events)| acc + events)
+            );
+        }
+        for (uid, _) in entities_to_chuck {
+            assert!(flight.entities.remove(&uid).is_some());
+        }
+
+        // Let's do the same with features...
+        let features_to_chuck = flight
+            .features
+            .iter()
+            .filter(|(_uid, data)| data.position_data.is_none())
+            .map(|(uid, data)| (*uid, data.events.len() as u32))
+            .collect::<Vec<(i32, u32)>>();
+        if !features_to_chuck.is_empty() {
+            debug!(
+                "{} features were never defined with position info, but have {} events",
+                features_to_chuck.len(),
+                features_to_chuck
+                    .iter()
+                    .fold(0, |acc, (_uid, events)| acc + events)
+            );
+        }
+        for (uid, _) in features_to_chuck {
+            assert!(flight.features.remove(&uid).is_some());
+        }
+
         flight
     }
 }
@@ -92,13 +139,18 @@ pub struct EntityPositionData {
     pub kind: i32,
     /// Stores The type of entity (see `ENTITY_FLAG_...`)
     pub flags: u32,
-    position_updates: Vec<PositionUpdate>,
+    pub position_updates: Vec<PositionUpdate>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct EntityData {
-    position_data: Option<EntityPositionData>,
-    events: Vec<EntityEvent>,
+    /// Sometimes events start arriving before the position data,
+    /// so fill that in when it arrives.
+    ///
+    /// TODO: Some entities _never_ get position data; only events.
+    ///       Should we ignore events that arrive before a position for that UID?
+    pub position_data: Option<EntityPositionData>,
+    pub events: Vec<EntityEvent>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -121,6 +173,11 @@ pub struct FeaturePositionData {
 
 #[derive(Debug, Clone, Default)]
 pub struct FeatureData {
+    /// Sometimes events start arriving before the position data,
+    /// so fill that in when it arrives.
+    ///
+    /// TODO: Some features _never_ get position data; only events.
+    ///       Should we ignore events that arrive before a position for that UID?
     pub position_data: Option<FeaturePositionData>,
     pub events: Vec<FeatureEvent>,
 }
@@ -171,6 +228,15 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
     let type_byte = type_byte[0];
 
     let time = read_f32(r)?;
+
+    if type_byte != REC_TYPE_TOD_OFFSET {
+        if flight.start_time < 0.0 {
+            flight.start_time = time;
+        }
+        if flight.end_time < time {
+            flight.end_time = time;
+        }
+    }
 
     match type_byte {
         REC_TYPE_GENERAL_POSITION
