@@ -2,9 +2,12 @@ use std::fs::File;
 use std::io;
 use std::io::prelude::*;
 use std::path::PathBuf;
+use std::thread;
+use std::sync::mpsc::*;
 
 use anyhow::*;
 use log::*;
+use serde_derive::*;
 use simplelog::*;
 use structopt::StructOpt;
 
@@ -115,6 +118,11 @@ impl<R: Read> Read for CountedRead<R> {
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum Printable {
+}
+
 /// Read (and print) the .VHS file
 ///
 /// VHS files have a few sections:
@@ -148,22 +156,38 @@ fn read_vhs<R: Read>(r: R) -> Result<()> {
     let mut counted = CountedRead::new(r);
     let counted = &mut counted;
 
-    println!("{{");
+    let (mut tx, rx) = channel();
+    let tx = &mut tx;
 
-    let header = read_header(counted)?;
-    read_entities(&header, counted)?;
-    read_features(&header, counted)?;
-    read_position_updates(&header, counted)?;
-    read_entity_events(&header, counted)?;
-    read_general_events(&header, counted)?;
-    read_feature_events(&header, counted)?;
-    read_callsigns(&header, counted)?;
+    let printer: thread::JoinHandle<Result<()>> = thread::spawn(move || {
+        let stdout = io::stdout();
+        let mut stdout = stdout.lock();
 
-    println!("\n}}");
+        write!(&mut stdout, "{{")?;
+
+        while let Ok(printable) = rx.recv() {
+            serde_json::to_writer(&mut stdout, &printable)?;
+        }
+
+        write!(&mut stdout, "}}")?;
+        Ok(())
+    });
+
+
+    let header = read_header(counted, tx)?;
+    read_entities(&header, counted, tx)?;
+    read_features(&header, counted, tx)?;
+    read_position_updates(&header, counted, tx)?;
+    read_entity_events(&header, counted, tx)?;
+    read_general_events(&header, counted, tx)?;
+    read_feature_events(&header, counted, tx)?;
+    read_callsigns(&header, counted, tx)?;
+
+    printer.join().unwrap()?;
     Ok(())
 }
 
-fn read_header<R: Read>(r: &mut CountedRead<R>) -> Result<TapeHeader> {
+fn read_header<R: Read>(r: &mut CountedRead<R>, tx: &mut Sender<Printable>) -> Result<TapeHeader> {
     let header = TapeHeader::read(r)?;
     if &header.file_id != b"EPAT" {
         warn!(
@@ -179,7 +203,7 @@ fn read_header<R: Read>(r: &mut CountedRead<R>) -> Result<TapeHeader> {
     Ok(header)
 }
 
-fn read_entities<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+fn read_entities<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>, tx: &mut Sender<Printable>) -> Result<()> {
     let posit = r.get_posit();
     ensure!(
         header.entity_offset == posit,
@@ -202,7 +226,7 @@ fn read_entities<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result
     Ok(())
 }
 
-fn read_features<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+fn read_features<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>, tx: &mut Sender<Printable>) -> Result<()> {
     let posit = r.get_posit();
     ensure!(
         header.feature_offset == posit,
@@ -232,7 +256,7 @@ fn read_features<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result
     Ok(())
 }
 
-fn read_position_updates<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+fn read_position_updates<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>, tx: &mut Sender<Printable>) -> Result<()> {
     let posit = r.get_posit();
     ensure!(
         header.position_offset == posit,
@@ -262,7 +286,7 @@ fn read_position_updates<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -
     Ok(())
 }
 
-fn read_entity_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+fn read_entity_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>, tx: &mut Sender<Printable>) -> Result<()> {
     let posit = r.get_posit();
     ensure!(
         header.entity_event_offset == posit,
@@ -293,7 +317,7 @@ fn read_entity_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> R
     Ok(())
 }
 
-fn read_general_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+fn read_general_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>, tx: &mut Sender<Printable>) -> Result<()> {
     let mut posit = r.get_posit();
     ensure!(
         header.general_event_offset == posit,
@@ -347,7 +371,7 @@ fn read_general_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> 
     Ok(())
 }
 
-fn read_feature_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+fn read_feature_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>, tx: &mut Sender<Printable>) -> Result<()> {
     let posit = r.get_posit();
     ensure!(
         header.feature_event_offset == posit,
@@ -378,7 +402,7 @@ fn read_feature_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> 
     Ok(())
 }
 
-fn read_callsigns<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+fn read_callsigns<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>, tx: &mut Sender<Printable>) -> Result<()> {
     let posit = r.get_posit();
     ensure!(
         header.text_event_offset == posit,
