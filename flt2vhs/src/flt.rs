@@ -304,7 +304,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 yaw: record.yaw,
                 radar_target,
             };
-            trace!("Entity {} position update: {:?}", record.uid, posit_update);
+            trace!("{}: {:?}", record.uid, posit_update);
             entity_data
                 .position_data
                 .as_mut()
@@ -420,7 +420,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 kind: record.kind,
                 payload,
             };
-            trace!("Entity {} event: {:?}", record.uid, event);
+            trace!("{}: {:?}", record.uid, event);
             entity.events.push(event);
         }
         REC_TYPE_DOF => {
@@ -441,7 +441,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 kind: record.kind,
                 payload,
             };
-            trace!("Entity {} event: {:?}", record.uid, event);
+            trace!("{}: {:?}", record.uid, event);
             entity.events.push(event);
         }
         REC_TYPE_TOD_OFFSET => flight.tod_offset = time,
