@@ -130,7 +130,7 @@ pub struct TimelineEntry {
 }
 
 impl TimelineEntry {
-    pub fn read<R: Read + Seek>(r: &mut R) -> Result<Self> {
+    pub fn read<R: Read>(r: &mut R) -> Result<Self> {
         let time = read_f32(r)?;
         let payload = match read_u8(r)? {
             0 => TimelineEntryPayload::Pos(Position::read(r)?),
@@ -198,13 +198,13 @@ pub struct Switch {
 }
 
 impl Switch {
-    pub fn read<R: Read + Seek>(r: &mut R) -> Result<Self> {
+    pub fn read<R: Read>(r: &mut R) -> Result<Self> {
         let switch_index = read_i32(r)?;
         let switch_value = read_i32(r)?;
         let previous_switch_value = read_i32(r)?;
 
         // The other union values have another four 4-byte values
-        r.seek(io::SeekFrom::Current(16))?;
+        io::copy(&mut r.take(16), &mut io::sink())?;
 
         Ok(Self {
             switch_index,
@@ -222,13 +222,13 @@ pub struct DOF {
 }
 
 impl DOF {
-    pub fn read<R: Read + Seek>(r: &mut R) -> Result<Self> {
+    pub fn read<R: Read>(r: &mut R) -> Result<Self> {
         let dof_index = read_i32(r)?;
         let dof_value = read_f32(r)?;
         let previous_dof_value = read_f32(r)?;
 
         // The other union values have another four 4-byte values
-        r.seek(io::SeekFrom::Current(16))?;
+        io::copy(&mut r.take(16), &mut io::sink())?;
 
         Ok(Self {
             dof_index,
@@ -260,7 +260,7 @@ pub struct GeneralEventHeader {
 }
 
 impl GeneralEventHeader {
-    pub fn read<R: Read + Seek>(r: &mut R) -> Result<Self> {
+    pub fn read<R: Read>(r: &mut R) -> Result<Self> {
         let event_type = read_u8(r)?;
         let index = read_i32(r)?;
         let time = read_f32(r)?;
@@ -308,7 +308,7 @@ pub struct GeneralEventTrailer {
 }
 
 impl GeneralEventTrailer {
-    pub fn read<R: Read + Seek>(r: &mut R) -> Result<Self> {
+    pub fn read<R: Read>(r: &mut R) -> Result<Self> {
         let time_end = read_f32(r)?;
         let index = read_i32(r)?;
 

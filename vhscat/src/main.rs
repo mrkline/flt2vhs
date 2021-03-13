@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::*;
 use log::*;
@@ -31,13 +31,30 @@ struct Args {
 
     /// The .VHS file to read
     #[structopt(short, long)]
-    input: PathBuf,
+    input: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let args = Args::from_args();
     init_logger(args.verbose, args.timestamps)?;
-    read_vhs(&args.input)?;
+
+    let stdin = io::stdin();
+
+    let input: Box<dyn io::Read> = match args.input {
+        None => {
+            Box::new(stdin.lock())
+        },
+        Some(file) => {
+            if file.to_string_lossy() == "-" {
+                Box::new(stdin.lock())
+            } else {
+                Box::new(File::open(&file).with_context(|| format!("Couldn't open {}", file.display()))?)
+            }
+        }
+    };
+    let r = io::BufReader::new(input);
+
+    read_vhs(r)?;
     Ok(())
 }
 
@@ -73,9 +90,29 @@ fn init_logger(verbosity: u8, timestamps: bool) -> Result<()> {
     }
 }
 
-fn get_posit<S: Seek>(s: &mut S) -> u32 {
-    s.seek(io::SeekFrom::Current(0))
-        .expect("Couldn't get current stream position") as u32
+struct CountedRead<R> {
+    inner: R,
+    posit: u32, // Welcome to 1998, where files are always < 4 GB.
+}
+
+impl<R: Read> CountedRead<R> {
+    fn new(inner: R) -> Self {
+        Self { inner, posit: 0 }
+    }
+
+    fn get_posit(&self) -> u32 {
+        self.posit
+    }
+}
+
+impl<R: Read> Read for CountedRead<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let res = self.inner.read(buf);
+        if let Ok(count) = res {
+            self.posit += count as u32;
+        }
+        res
+    }
 }
 
 /// Read (and print) the .VHS file
@@ -107,29 +144,27 @@ fn get_posit<S: Seek>(s: &mut S) -> u32 {
 /// 7. Feature events containing a feature index, a timestamp, and a state change
 ///
 /// 8. A set of calligns and team colors.
-fn read_vhs(input: &Path) -> Result<()> {
-    let mut fh = io::BufReader::new(
-        File::open(input).with_context(|| format!("Couldn't open {}", input.display()))?,
-    );
-    let fh = &mut fh;
+fn read_vhs<R: Read>(r: R) -> Result<()> {
+    let mut counted = CountedRead::new(r);
+    let counted = &mut counted;
 
     println!("{{");
 
-    let header = read_header(fh)?;
-    read_entities(&header, fh)?;
-    read_features(&header, fh)?;
-    read_position_updates(&header, fh)?;
-    read_entity_events(&header, fh)?;
-    read_general_events(&header, fh)?;
-    read_feature_events(&header, fh)?;
-    read_callsigns(&header, fh)?;
+    let header = read_header(counted)?;
+    read_entities(&header, counted)?;
+    read_features(&header, counted)?;
+    read_position_updates(&header, counted)?;
+    read_entity_events(&header, counted)?;
+    read_general_events(&header, counted)?;
+    read_feature_events(&header, counted)?;
+    read_callsigns(&header, counted)?;
 
     println!("\n}}");
     Ok(())
 }
 
-fn read_header(fh: &mut io::BufReader<File>) -> Result<TapeHeader> {
-    let header = TapeHeader::read(fh)?;
+fn read_header<R: Read>(r: &mut CountedRead<R>) -> Result<TapeHeader> {
+    let header = TapeHeader::read(r)?;
     if &header.file_id != b"EPAT" {
         warn!(
             "Expected magic bytes 'EPAT', got {:?} ({})",
@@ -138,22 +173,14 @@ fn read_header(fh: &mut io::BufReader<File>) -> Result<TapeHeader> {
         );
     }
 
-    let actual_size = fh.get_ref().metadata()?.len();
-    ensure!(
-        header.file_size as u64 <= actual_size,
-        "Given size ({}) > actual size ({})",
-        header.file_size,
-        actual_size
-    );
-
     print!("\"header\": ");
     serde_json::to_writer(&io::stdout(), &header)?;
     println!(",");
     Ok(header)
 }
 
-fn read_entities(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()> {
-    let posit = get_posit(fh);
+fn read_entities<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+    let posit = r.get_posit();
     ensure!(
         header.entity_offset == posit,
         "Expected entities to start at {}, currently at {}",
@@ -167,7 +194,7 @@ fn read_entities(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()
     );
     println!("\"entities\": [");
     for i in 0..header.entity_count {
-        let entity = Entity::read(fh)?;
+        let entity = Entity::read(r)?;
         serde_json::to_writer(&io::stdout(), &entity)?;
         println!("{}", if i < header.entity_count - 1 { "," } else { "" });
     }
@@ -175,8 +202,8 @@ fn read_entities(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()
     Ok(())
 }
 
-fn read_features(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()> {
-    let posit = get_posit(fh);
+fn read_features<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+    let posit = r.get_posit();
     ensure!(
         header.feature_offset == posit,
         "Expected features to start at {}, currently at {}",
@@ -190,7 +217,7 @@ fn read_features(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()
     );
     println!("\"features\": [");
     for i in 0..header.feature_count {
-        let feature = Entity::read(fh)?;
+        let feature = Entity::read(r)?;
         serde_json::to_writer(&io::stdout(), &feature)?;
         println!(
             "{}",
@@ -205,8 +232,8 @@ fn read_features(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()
     Ok(())
 }
 
-fn read_position_updates(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()> {
-    let posit = get_posit(fh);
+fn read_position_updates<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+    let posit = r.get_posit();
     ensure!(
         header.position_offset == posit,
         "Expected position updates to start at {}, currently at {}",
@@ -220,7 +247,7 @@ fn read_position_updates(header: &TapeHeader, fh: &mut io::BufReader<File>) -> R
     );
     println!("\"position updates\": [");
     for i in 0..header.position_count {
-        let entry = TimelineEntry::read(fh)?;
+        let entry = TimelineEntry::read(r)?;
         serde_json::to_writer(&io::stdout(), &entry)?;
         println!(
             "{}",
@@ -235,8 +262,8 @@ fn read_position_updates(header: &TapeHeader, fh: &mut io::BufReader<File>) -> R
     Ok(())
 }
 
-fn read_entity_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()> {
-    let posit = get_posit(fh);
+fn read_entity_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+    let posit = r.get_posit();
     ensure!(
         header.entity_event_offset == posit,
         "Expected entity events to start at {}, currently at {}",
@@ -250,7 +277,7 @@ fn read_entity_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Resu
     );
     println!("\"entity events\": [");
     for i in 0..header.entity_event_count {
-        let entry = TimelineEntry::read(fh)?;
+        let entry = TimelineEntry::read(r)?;
 
         serde_json::to_writer(&io::stdout(), &entry)?;
         println!(
@@ -266,8 +293,8 @@ fn read_entity_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Resu
     Ok(())
 }
 
-fn read_general_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()> {
-    let mut posit = get_posit(fh);
+fn read_general_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+    let mut posit = r.get_posit();
     ensure!(
         header.general_event_offset == posit,
         "Expected general event headers to start at {}, currently at {}",
@@ -281,7 +308,7 @@ fn read_general_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Res
     );
     println!("\"general event headers\": [");
     for i in 0..header.general_event_count {
-        let entry = GeneralEventHeader::read(fh)?;
+        let entry = GeneralEventHeader::read(r)?;
 
         serde_json::to_writer(&io::stdout(), &entry)?;
         println!(
@@ -295,7 +322,7 @@ fn read_general_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Res
     }
     println!("],");
 
-    posit = get_posit(fh);
+    posit = r.get_posit();
     ensure!(
         header.general_event_trailer_offset == posit,
         "Expected general event trailers to start at {}, currently at {}",
@@ -304,7 +331,7 @@ fn read_general_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Res
     );
     println!("\"general event trailers\": [");
     for i in 0..header.general_event_count {
-        let entry = GeneralEventTrailer::read(fh)?;
+        let entry = GeneralEventTrailer::read(r)?;
 
         serde_json::to_writer(&io::stdout(), &entry)?;
         println!(
@@ -320,8 +347,8 @@ fn read_general_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Res
     Ok(())
 }
 
-fn read_feature_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()> {
-    let posit = get_posit(fh);
+fn read_feature_events<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+    let posit = r.get_posit();
     ensure!(
         header.feature_event_offset == posit,
         "Expected feature events to start at {}, currently at {}",
@@ -335,7 +362,7 @@ fn read_feature_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Res
     );
     println!("\"feature events\": [");
     for i in 0..header.feature_event_count {
-        let entry = FeatureEvent::read(fh)?;
+        let entry = FeatureEvent::read(r)?;
 
         serde_json::to_writer(&io::stdout(), &entry)?;
         println!(
@@ -351,8 +378,8 @@ fn read_feature_events(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Res
     Ok(())
 }
 
-fn read_callsigns(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<()> {
-    let posit = get_posit(fh);
+fn read_callsigns<R: Read>(header: &TapeHeader, r: &mut CountedRead<R>) -> Result<()> {
+    let posit = r.get_posit();
     ensure!(
         header.text_event_offset == posit,
         "Expected text events to start at {}, currently at {}",
@@ -363,7 +390,7 @@ fn read_callsigns(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<(
     // For reasons I don't understand, the callsign count is saved
     // in four bytes preceding the block instead of as `text_event_count`
     // in the file header.
-    let callsign_count = read_primitives::read_i32(fh)?;
+    let callsign_count = read_primitives::read_i32(r)?;
     ensure!(
         callsign_count >= 0,
         "Negative ({}) timeline entry count",
@@ -371,7 +398,7 @@ fn read_callsigns(header: &TapeHeader, fh: &mut io::BufReader<File>) -> Result<(
     );
     println!("\"callsigns\": [");
     for i in 0..callsign_count {
-        let callsign = CallsignRecord::read(fh)?;
+        let callsign = CallsignRecord::read(r)?;
 
         serde_json::to_writer(&io::stdout(), &callsign)?;
         println!("{}", if i < callsign_count - 1 { "," } else { "" });
