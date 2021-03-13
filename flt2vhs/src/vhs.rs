@@ -161,6 +161,9 @@ impl Header {
     fn write<W: Write>(&self, flight: &Flight, w: &mut W) -> Result<()> {
         w.write_all(b"EPAT")?;
 
+        // Let's debug print the header. It's fairly short,
+        // and the offsets and counts are a good sanity check.
+
         debug!("File size: {}", self.file_length);
         write_u32(self.file_length, w)?;
 
@@ -228,6 +231,26 @@ impl Header {
     }
 }
 
+/// Write the out the list of entities.
+///
+/// Entities and features (things that don't move) share the same on-disk format,
+/// so some fields aren't used. Each contains:
+///
+/// - A UID
+///
+/// - A type (or "kind" here since it's a keyword in Rust :P )
+///
+/// - An index relative to all other entities of the same kind.
+///
+/// - Flags indicating the category of entity (plane, missile, chaff, flare, etc.)
+///
+/// - Lead index, slot, and special flags: All unused entities, used by features.
+///
+/// - The offset of the first position update for the entity, which acts as
+///   the head of a doubly-linked list of positions for it.
+///
+/// - The offset of the first event for the entity, which acts as the head of
+///   a second doubly-linked list (this one of events).
 fn write_entities<W: Write>(
     flight: &Flight,
     sorted_uids: &[i32],
@@ -257,6 +280,9 @@ fn write_entities<W: Write>(
         write_i32(0, w)?;
         write_u32(0, w)?;
 
+        // Every entity should have at least one position,
+        // and we've screwed something up if we get here without one.
+        assert!(!data.position_updates.is_empty());
         let first_position_offset = header.position_offset + ENTITY_UPDATE_SIZE * position_index;
         write_u32(first_position_offset, w)?;
 
