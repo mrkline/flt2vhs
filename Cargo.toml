@@ -1,5 +1,5 @@
 [workspace]
-members = ["flt2vhs", "vhscat"]
+members = ["flt2vhs", "vhscat", "flt-mover"]
 
 [profile.dev]
 opt-level = 2 # We want optimization even for debug builds for all the hashing.
