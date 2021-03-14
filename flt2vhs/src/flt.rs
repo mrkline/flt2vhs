@@ -108,7 +108,6 @@ pub struct EntityPositionUpdate {
 #[derive(Debug, Copy, Clone)]
 pub struct EntityEvent {
     pub time: f32,
-    pub kind: i32,
     pub payload: EntityEventPayload,
 }
 
@@ -416,11 +415,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 previous_switch_value: record.previous_switch_value,
             });
 
-            let event = EntityEvent {
-                time,
-                kind: record.kind,
-                payload,
-            };
+            let event = EntityEvent { time, payload };
             trace!("{}: {:?}", record.uid, event);
             entity.events.push(event);
         }
@@ -437,11 +432,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 previous_dof_value: record.previous_dof_value,
             });
 
-            let event = EntityEvent {
-                time,
-                kind: record.kind,
-                payload,
-            };
+            let event = EntityEvent { time, payload };
             trace!("{}: {:?}", record.uid, event);
             entity.events.push(event);
         }
