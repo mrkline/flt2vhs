@@ -7,7 +7,7 @@ use anyhow::*;
 use log::*;
 use rayon::prelude::*;
 
-use crate::flt::Flight;
+use crate::flt::{self, Flight};
 use crate::print_timing;
 use crate::write_primitives::*;
 
@@ -66,8 +66,29 @@ pub fn write<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
     header.write(flight, w)?;
     assert_eq!(w.get_posit(), ENTITY_OFFSET);
 
-    write_entities(flight, &entity_uids, &header, w)?;
+    let feature_position_offset = write_entities(flight, &entity_uids, &header, w)?;
     assert_eq!(w.get_posit(), header.feature_offset);
+
+    // Some of the feature fields refer to the index of other features.
+    // Let's put those in hash map so we can get constant time lookup.
+    let mut feature_indexes: HashMap<i32, i32> = HashMap::with_capacity(feature_uids.len());
+    for (i, uid) in feature_uids.iter().enumerate() {
+        feature_indexes.insert(*uid, i as i32);
+    }
+
+    write_features(
+        flight,
+        &feature_uids,
+        &feature_indexes,
+        feature_position_offset,
+        &header,
+        w,
+    )?;
+    assert_eq!(w.get_posit(), header.position_offset);
+
+    write_entity_positions(flight, &entity_uids, w)?;
+    write_feature_positions(flight, &feature_uids, w)?;
+    assert_eq!(w.get_posit(), header.entity_event_offset);
 
     print_timing("VHS write", &write_start);
     Ok(())
@@ -256,7 +277,7 @@ fn write_entities<W: Write>(
     sorted_uids: &[i32],
     header: &Header,
     w: &mut W,
-) -> Result<()> {
+) -> Result<u32> {
     let mut kind_indexes = HashMap::new();
     let mut position_index = 0;
     let mut event_index = 0;
@@ -284,6 +305,9 @@ fn write_entities<W: Write>(
         // and we've screwed something up if we get here without one.
         assert!(!data.position_updates.is_empty());
         let first_position_offset = header.position_offset + ENTITY_UPDATE_SIZE * position_index;
+        assert!(first_position_offset >= header.position_offset);
+        assert!(first_position_offset < header.entity_event_offset);
+
         write_u32(first_position_offset, w)?;
 
         let first_event_offset = if entity.events.is_empty() {
@@ -297,5 +321,117 @@ fn write_entities<W: Write>(
         event_index += entity.events.len() as u32;
     }
 
+    Ok(header.position_offset + ENTITY_UPDATE_SIZE * position_index)
+}
+
+fn write_features<W: Write>(
+    flight: &Flight,
+    sorted_uids: &[i32],
+    feature_indexes: &HashMap<i32, i32>,
+    feature_position_offset: u32,
+    header: &Header,
+    w: &mut W,
+) -> Result<()> {
+    let mut position_index = 0;
+
+    for uid in sorted_uids {
+        let feature = flight.features.get(uid).unwrap();
+        let data = feature.position_data.as_ref().unwrap();
+        write_i32(*uid, w)?;
+        write_i32(data.kind, w)?;
+
+        // Features don't play the same "type index" game entities do.
+        write_i32(0, w)?;
+
+        write_u32(flt::ENTITY_FLAG_FEATURE, w)?;
+
+        // Lead index
+        write_i32(*feature_indexes.get(&data.lead_uid).unwrap_or(&-1), w)?;
+
+        write_i32(data.slot, w)?;
+        write_u32(data.special_flags, w)?;
+
+        let position_offset = feature_position_offset + ENTITY_UPDATE_SIZE * position_index;
+        assert!(position_offset >= feature_position_offset);
+        assert!(position_offset < header.entity_event_offset);
+        write_u32(position_offset, w)?;
+
+        // Since feature events are stored separately,
+        // first event offset is apparently always zero.
+        write_u32(0, w)?;
+
+        position_index += 1;
+    }
+
+    Ok(())
+}
+
+fn write_entity_positions<W: Write>(
+    flight: &Flight,
+    entity_uids: &[i32],
+    w: &mut CountedWrite<W>,
+) -> Result<()> {
+    for uid in entity_uids {
+        let entity = flight.entities.get(uid).unwrap();
+        let data = entity.position_data.as_ref().unwrap();
+
+        let mut previous_offset = 0u32;
+
+        let mut posits = data.position_updates.iter().peekable();
+
+        while let Some(new_posit) = posits.next() {
+            let current_offset = w.get_posit();
+            write_f32(new_posit.time, w)?;
+            // Updates are unions of position updates,
+            // switch updates, and DOF updates.
+            // The next byte is the union's tag/descriminant.
+            write_u8(0, w)?;
+            write_f32(new_posit.x, w)?;
+            write_f32(new_posit.y, w)?;
+            write_f32(new_posit.z, w)?;
+            write_f32(new_posit.pitch, w)?;
+            write_f32(new_posit.roll, w)?;
+            write_f32(new_posit.yaw, w)?;
+            write_i32(new_posit.radar_target, w)?;
+
+            let next_offset = if posits.peek().is_some() {
+                current_offset + ENTITY_UPDATE_SIZE
+            } else {
+                0
+            };
+            write_u32(next_offset, w)?;
+            write_u32(previous_offset, w)?;
+            previous_offset = current_offset;
+        }
+    }
+    Ok(())
+}
+
+fn write_feature_positions<W: Write>(
+    flight: &Flight,
+    entity_uids: &[i32],
+    w: &mut W,
+) -> Result<()> {
+    for uid in entity_uids {
+        let feature = flight.features.get(uid).unwrap();
+        let data = feature.position_data.as_ref().unwrap();
+
+        write_f32(data.time, w)?;
+        // Updates are unions of position updates,
+        // switch updates, and DOF updates.
+        // The next byte is the union's tag/descriminant.
+        write_u8(0, w)?;
+        write_f32(data.x, w)?;
+        write_f32(data.y, w)?;
+        write_f32(data.z, w)?;
+        write_f32(data.pitch, w)?;
+        write_f32(data.roll, w)?;
+        write_f32(data.yaw, w)?;
+        // Radar target
+        write_i32(-1, w)?;
+        // No previuos or next positions
+        write_u32(0, w)?;
+        write_u32(0, w)?;
+    }
     Ok(())
 }

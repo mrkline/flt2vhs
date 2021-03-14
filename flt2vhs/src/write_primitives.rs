@@ -1,5 +1,11 @@
 use std::io::{Result, Write};
 
+/// Writes a byte to the provided writer
+#[inline(always)]
+pub fn write_u8<W: Write>(b: u8, w: &mut W) -> Result<()> {
+    w.write_all(&[b])
+}
+
 /// Writes a little-endian u32 to the provided writer
 #[inline]
 pub fn write_u32<W: Write>(i: u32, w: &mut W) -> Result<()> {

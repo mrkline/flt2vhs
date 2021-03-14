@@ -93,7 +93,7 @@ const ENTITY_FLAG_CHAFF: u32 = 0x00000008;
 const ENTITY_FLAG_FLARE: u32 = 0x00000010;
 
 #[derive(Debug, Copy, Clone)]
-pub struct PositionUpdate {
+pub struct EntityPositionUpdate {
     pub time: f32,
     pub x: f32,
     pub y: f32,
@@ -139,7 +139,7 @@ pub struct EntityPositionData {
     pub kind: i32,
     /// Stores The type of entity (see `ENTITY_FLAG_...`)
     pub flags: u32,
-    pub position_updates: Vec<PositionUpdate>,
+    pub position_updates: Vec<EntityPositionUpdate>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -168,7 +168,13 @@ pub struct FeaturePositionData {
     pub lead_uid: i32,
     pub slot: i32,
     pub special_flags: u32,
-    pub position: PositionUpdate,
+    pub time: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    pub yaw: f32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -294,7 +300,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 });
             }
 
-            let posit_update = PositionUpdate {
+            let posit_update = EntityPositionUpdate {
                 time,
                 x: record.x,
                 y: record.y,
@@ -314,7 +320,6 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
         }
         REC_TYPE_FEATURE_POSITION => {
             let record = FeaturePositionRecord::parse(r)?;
-            let radar_target = -1; // Should this be 0 to match acmi-compiler?
 
             let feature_data = flight
                 .features
@@ -327,7 +332,11 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                     record.uid
                 );
             } else {
-                let position = PositionUpdate {
+                let position_data = FeaturePositionData {
+                    kind: record.kind,
+                    lead_uid: record.lead_uid,
+                    slot: record.slot,
+                    special_flags: record.special_flags,
                     time,
                     x: record.x,
                     y: record.y,
@@ -335,14 +344,6 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                     pitch: record.pitch,
                     roll: record.roll,
                     yaw: record.yaw,
-                    radar_target,
-                };
-                let position_data = FeaturePositionData {
-                    kind: record.kind,
-                    lead_uid: record.lead_uid,
-                    slot: record.slot,
-                    special_flags: record.special_flags,
-                    position,
                 };
                 trace!("New feature {}: {:?}", record.uid, position_data);
                 feature_data.position_data = Some(position_data);
