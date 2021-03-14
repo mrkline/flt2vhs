@@ -90,6 +90,9 @@ pub fn write<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
     write_feature_positions(flight, &feature_uids, w)?;
     assert_eq!(w.get_posit(), header.entity_event_offset);
 
+    write_entity_events(flight, &entity_uids, w)?;
+    assert_eq!(w.get_posit(), header.general_event_offset);
+
     print_timing("VHS write", &write_start);
     Ok(())
 }
@@ -432,6 +435,56 @@ fn write_feature_positions<W: Write>(
         // No previuos or next positions
         write_u32(0, w)?;
         write_u32(0, w)?;
+    }
+    Ok(())
+}
+
+fn write_entity_events<W: Write>(
+    flight: &Flight,
+    entity_uids: &[i32],
+    w: &mut CountedWrite<W>,
+) -> Result<()> {
+    for uid in entity_uids {
+        let entity = flight.entities.get(uid).unwrap();
+        let mut events = entity.events.iter().peekable();
+
+        let mut previous_offset = 0u32;
+
+        while let Some(event) = events.next() {
+            let current_offset = w.get_posit();
+            write_f32(event.time, w)?;
+            // Updates are unions of position updates,
+            // switch updates, and DOF updates.
+            // The next byte is the union's tag/descriminant.
+            match event.payload {
+                flt::EntityEventPayload::SwitchEvent(switch) => {
+                    write_u8(1, w)?;
+                    write_i32(switch.switch_number, w)?;
+                    write_i32(switch.new_switch_value, w)?;
+                    write_i32(switch.previous_switch_value, w)?;
+                }
+                flt::EntityEventPayload::DofEvent(dof) => {
+                    write_u8(2, w)?;
+                    write_i32(dof.dof_number, w)?;
+                    write_f32(dof.new_dof_value, w)?;
+                    write_f32(dof.previous_dof_value, w)?;
+                }
+            };
+            // Unused space, taken up by the position update in the union
+            write_u32(0, w)?;
+            write_u32(0, w)?;
+            write_u32(0, w)?;
+            write_u32(0, w)?;
+
+            let next_offset = if events.peek().is_some() {
+                current_offset + ENTITY_UPDATE_SIZE
+            } else {
+                0
+            };
+            write_u32(next_offset, w)?;
+            write_u32(previous_offset, w)?;
+            previous_offset = current_offset;
+        }
     }
     Ok(())
 }
