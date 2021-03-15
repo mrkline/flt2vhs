@@ -414,16 +414,17 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
         REC_TYPE_TOD_OFFSET => flight.tod_offset = time,
         REC_TYPE_FEATURE_STATUS => {
             let record = FeatureEventRecord::read(r)?;
-            // Look up the feature by its UID
-            if !flight.features.contains_key(&record.uid) {
-                bail!("Couldn't find feature {} to add an event", record.uid);
-            }
             let event = FeatureEvent {
                 time,
                 feature_uid: record.uid,
                 new_status: record.new_status,
                 previous_status: record.previous_status,
             };
+            // Look up the feature by its UID
+            if !flight.features.contains_key(&record.uid) {
+                warn!("No feature for event {:?}", event);
+                return Ok(true);
+            }
             trace!("Feature event: {:?}", event);
             flight.feature_events.push(event);
         }
