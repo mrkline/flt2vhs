@@ -378,6 +378,12 @@ fn write_entity_positions<W: Write>(
     entity_uids: &[i32],
     w: &mut CountedWrite<W>,
 ) -> Result<()> {
+    // Radar targets need to be converted from UIDs to entity indexes.
+    let mut entity_indexes: HashMap<i32, i32> = HashMap::with_capacity(entity_uids.len());
+    for (i, uid) in entity_uids.iter().enumerate() {
+        entity_indexes.insert(*uid, i as i32);
+    }
+
     for uid in entity_uids {
         let entity = flight.entities.get(uid).unwrap();
         let data = entity.position_data.as_ref().unwrap();
@@ -399,7 +405,11 @@ fn write_entity_positions<W: Write>(
             write_f32(new_posit.pitch, w)?;
             write_f32(new_posit.roll, w)?;
             write_f32(new_posit.yaw, w)?;
-            write_i32(new_posit.radar_target, w)?;
+            // Radar target index
+            write_i32(
+                *entity_indexes.get(&new_posit.radar_target).unwrap_or(&-1),
+                w,
+            )?;
 
             let next_offset = if posits.peek().is_some() {
                 current_offset + ENTITY_UPDATE_SIZE
