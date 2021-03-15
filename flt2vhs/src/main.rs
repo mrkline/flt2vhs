@@ -47,7 +47,7 @@ fn main() -> Result<()> {
 
     let parse_start = Instant::now();
     let parsed_flight = flt::Flight::parse(&*mapping);
-    print_timing("Parsing", &parse_start);
+    print_timing("FLT parse", &parse_start);
     if parsed_flight.corrupted {
         warn!("Flight file is corrupted! Doing what we can with what we have...");
     }
@@ -57,7 +57,9 @@ fn main() -> Result<()> {
     let output = args.output.unwrap_or(default_output);
     let vhs = open_vhs(&output)?;
 
+    let write_start = Instant::now();
     vhs::write(&parsed_flight, vhs)?;
+    print_timing("VHS write", &write_start);
 
     print_timing("Entire operation", &start_time);
     if parsed_flight.corrupted {

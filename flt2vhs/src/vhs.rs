@@ -3,14 +3,12 @@
 use std::collections::HashMap;
 use std::io;
 use std::io::prelude::*;
-use std::time::Instant;
 
 use anyhow::*;
 use log::*;
 use rayon::prelude::*;
 
 use crate::flt::{self, Flight};
-use crate::print_timing;
 use crate::write_primitives::*;
 
 /// The header is 80 bytes long; entities start after.
@@ -63,14 +61,10 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
     // so sort the UIDs instead of grabbing them in whatever order they come
     // out of the hash map.
     // Unstable sorts are fine, though, since Unique IDs better be... unique.
-    let sort_start = Instant::now();
     let mut entity_uids = flight.entities.keys().copied().collect::<Vec<_>>();
     entity_uids.par_sort_unstable();
     let mut feature_uids = flight.features.keys().copied().collect::<Vec<_>>();
     feature_uids.par_sort_unstable();
-    print_timing("Sorting UIDs", &sort_start);
-
-    let write_start = Instant::now();
 
     // Build the header, which will give us an idea of how big the file will be.
     let header = Header::new(flight);
@@ -81,8 +75,6 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
     let buffered = io::BufWriter::with_capacity(buf_size as usize, w);
     let mut counted = CountedWrite::new(buffered);
     let w = &mut counted;
-
-    let header_start = Instant::now();
 
     header.write(flight, w)?;
     assert_eq!(w.get_posit(), ENTITY_OFFSET);
@@ -105,9 +97,6 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
         &header,
         w,
     )?;
-    print_timing("Writing header, entities, & features", &header_start);
-
-    let event_start = Instant::now();
 
     assert_eq!(w.get_posit(), header.position_offset);
     write_entity_positions(flight, &entity_uids, w)?;
@@ -125,11 +114,9 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
     assert_eq!(w.get_posit(), header.text_event_offset);
     write_callsigns(flight, w)?;
 
-    print_timing("Writing events and callsigns", &event_start);
     assert_eq!(w.get_posit(), header.file_length);
 
     w.flush()?;
-    print_timing("VHS write", &write_start);
     Ok(())
 }
 
