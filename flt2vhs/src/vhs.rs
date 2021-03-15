@@ -71,9 +71,9 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
 
     // Buffer writes up to 100 MB or the file size, whichever is smallest.
     // (100 MB being "a round number that's not too much RAM."; play with this.)
-    let buf_size = std::cmp::min(100 * 1024 * 1024, header.file_length);
-    let buffered = io::BufWriter::with_capacity(buf_size as usize, w);
-    let mut counted = CountedWrite::new(buffered);
+    // let buf_size = std::cmp::min(100 * 1024 * 1024, header.file_length);
+    // let buffered = io::BufWriter::with_capacity(buf_size as usize, w);
+    let mut counted = CountedWrite::new(io::sink());
     let w = &mut counted;
 
     header.write(flight, w)?;
