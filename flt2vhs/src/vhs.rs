@@ -1,3 +1,5 @@
+//! Writes a flight parsed from a `.flt` file into a `.vhs` file
+
 use std::collections::HashMap;
 use std::io;
 use std::io::prelude::*;
@@ -20,6 +22,8 @@ const GENERAL_EVENT_TRAILER_SIZE: u32 = 8;
 const FEATURE_EVENT_SIZE: u32 = 16;
 const CALLSIGN_RECORD_SIZE: u32 = 20;
 
+/// We'll want to check our position as we write -
+/// keep track ourselves so we don't have to make a bunch of stat() syscalls.
 struct CountedWrite<W> {
     inner: W,
     posit: u32, // Welcome to 1998, where files are always < 4 GB.
@@ -58,11 +62,12 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
     // We want our FLT -> VHS conversion to be deterministic,
     // so sort the UIDs instead of grabbing them in whatever order they come
     // out of the hash map.
+    // Unstable sorts are fine, though, since Unique IDs better be... unique.
     let sort_start = Instant::now();
     let mut entity_uids = flight.entities.keys().copied().collect::<Vec<_>>();
-    entity_uids.sort();
+    entity_uids.par_sort_unstable();
     let mut feature_uids = flight.features.keys().copied().collect::<Vec<_>>();
-    feature_uids.sort();
+    feature_uids.par_sort_unstable();
     print_timing("Sorting UIDs", &sort_start);
 
     let write_start = Instant::now();
@@ -100,6 +105,9 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
         &header,
         w,
     )?;
+    print_timing("Writing header, entities, & features", &header_start);
+
+    let event_start = Instant::now();
 
     assert_eq!(w.get_posit(), header.position_offset);
     write_entity_positions(flight, &entity_uids, w)?;
@@ -117,6 +125,7 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
     assert_eq!(w.get_posit(), header.text_event_offset);
     write_callsigns(flight, w)?;
 
+    print_timing("Writing events and callsigns", &event_start);
     assert_eq!(w.get_posit(), header.file_length);
 
     w.flush()?;
@@ -124,6 +133,11 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
     Ok(())
 }
 
+/// Lots of sizes and offsets we need to write to the file header,
+/// and a couple we don't (but are useful to check against).
+///
+/// FLT files never exceed 1GB, and the VHS shouldn't exceed much more.
+/// It's 1998, and "big" is 32 bits.
 #[derive(Debug)]
 struct Header {
     entity_count: u32,
@@ -203,14 +217,15 @@ impl Header {
     }
 
     fn write<W: Write>(&self, flight: &Flight, w: &mut W) -> Result<()> {
+        // The magic bytes: "TAPE", but little-endian.
         w.write_all(b"EPAT")?;
 
         // Let's debug print the header. It's fairly short,
         // and the offsets and counts are a good sanity check.
 
-        // Weird: acmi compiler sets this to the text event offset,
-        // not the actual length. TacView throws a fit if this isn't the case.
         debug!("File size: {}", self.file_length);
+        // Weird: acmi-compiler sets this to the text event offset,
+        // not the actual length. TacView throws a fit if this isn't the case.
         write_u32(self.text_event_offset, w)?;
 
         debug!("Entity count: {}", self.entity_count);
@@ -299,7 +314,7 @@ impl Header {
 ///   a second doubly-linked list (this one of events).
 fn write_entities<W: Write>(
     flight: &Flight,
-    sorted_uids: &[i32],
+    entity_uids: &[i32],
     header: &Header,
     w: &mut W,
 ) -> Result<u32> {
@@ -307,13 +322,13 @@ fn write_entities<W: Write>(
     let mut position_index = 0;
     let mut event_index = 0;
 
-    for uid in sorted_uids {
+    for uid in entity_uids {
         let entity = flight.entities.get(uid).unwrap();
         let data = entity.position_data.as_ref().unwrap();
         write_i32(*uid, w)?;
         write_i32(data.kind, w)?;
 
-        // For some reason (at least per the acmi compiler code), for each entity
+        // For some reason (at least per the acmi-compiler code), for each entity
         // we store its index (starting at 1!?) out of all entities of the same kind.
         let kind_index = kind_indexes.entry(data.kind).or_insert(1);
         write_i32(*kind_index, w)?;
@@ -349,17 +364,17 @@ fn write_entities<W: Write>(
     Ok(header.position_offset + ENTITY_UPDATE_SIZE * position_index)
 }
 
+/// Write out the list of features - see [`write_entities()`](write_entities),
+/// since features share the same format in the VHS file.
 fn write_features<W: Write>(
     flight: &Flight,
-    sorted_uids: &[i32],
+    feature_uids: &[i32],
     feature_indexes: &HashMap<i32, i32>,
     feature_position_offset: u32,
     header: &Header,
     w: &mut W,
 ) -> Result<()> {
-    let mut position_index = 0;
-
-    for uid in sorted_uids {
+    for (position_index, uid) in feature_uids.iter().enumerate() {
         let feature = flight.features.get(uid).unwrap();
         write_i32(*uid, w)?;
         write_i32(feature.kind, w)?;
@@ -375,7 +390,8 @@ fn write_features<W: Write>(
         write_i32(feature.slot, w)?;
         write_u32(feature.special_flags, w)?;
 
-        let position_offset = feature_position_offset + ENTITY_UPDATE_SIZE * position_index;
+        let position_offset =
+            feature_position_offset + ENTITY_UPDATE_SIZE * (position_index as u32);
         assert!(position_offset >= feature_position_offset);
         assert!(position_offset < header.entity_event_offset);
         write_u32(position_offset, w)?;
@@ -383,8 +399,6 @@ fn write_features<W: Write>(
         // Since feature events are stored separately,
         // first event offset is apparently always zero.
         write_u32(0, w)?;
-
-        position_index += 1;
     }
 
     Ok(())
@@ -406,7 +420,6 @@ fn write_entity_positions<W: Write>(
         let data = entity.position_data.as_ref().unwrap();
 
         let mut previous_offset = 0u32;
-
         let mut posits = data.position_updates.iter().peekable();
 
         while let Some(new_posit) = posits.next() {
@@ -428,6 +441,9 @@ fn write_entity_positions<W: Write>(
                 w,
             )?;
 
+            // What's nice about having all an entity's position updates in
+            // a contiguous lists is that we can write them out contiguously,
+            // making the doubly-linked list bookkeeping trivial.
             let next_offset = if posits.peek().is_some() {
                 current_offset + ENTITY_UPDATE_SIZE
             } else {
@@ -452,7 +468,7 @@ fn write_feature_positions<W: Write>(
         write_f32(feature.time, w)?;
         // Updates are unions of position updates,
         // switch updates, and DOF updates.
-        // The next byte is the union's tag/descriminant.
+        // The next byte is the union's tag/discriminant.
         write_u8(0, w)?;
         write_f32(feature.x, w)?;
         write_f32(feature.y, w)?;
@@ -462,7 +478,7 @@ fn write_feature_positions<W: Write>(
         write_f32(feature.yaw, w)?;
         // Radar target
         write_i32(-1, w)?;
-        // No previuos or next positions
+        // No previous or next positions
         write_u32(0, w)?;
         write_u32(0, w)?;
     }
@@ -485,7 +501,7 @@ fn write_entity_events<W: Write>(
             write_f32(event.time, w)?;
             // Updates are unions of position updates,
             // switch updates, and DOF updates.
-            // The next byte is the union's tag/descriminant.
+            // The next byte is the union's tag/discriminant.
             match event.payload {
                 flt::EntityEventPayload::SwitchEvent(switch) => {
                     write_u8(1, w)?;
@@ -506,6 +522,9 @@ fn write_entity_events<W: Write>(
             write_u32(0, w)?;
             write_u32(0, w)?;
 
+            // What's nice about having all an entity's position updates in
+            // a contiguous lists is that we can write them out contiguously,
+            // making the doubly-linked list bookkeeping trivial.
             let next_offset = if events.peek().is_some() {
                 current_offset + ENTITY_UPDATE_SIZE
             } else {
@@ -557,8 +576,9 @@ fn write_general_events<W: Write>(
         write_f32(event.yaw, w)?;
     }
 
+    // A list of "trailers" follows the event list, sorted chronologically.
     assert_eq!(w.get_posit(), header.general_event_trailer_offset);
-    trailers.par_sort_by(|a, b| a.stop.partial_cmp(&b.stop).expect("Not NaNs!"));
+    trailers.par_sort_by(|a, b| a.stop.partial_cmp(&b.stop).expect("Nooo, not NaNs!"));
     for trailer in trailers {
         write_f32(trailer.stop, w)?;
         write_u32(trailer.index, w)?;

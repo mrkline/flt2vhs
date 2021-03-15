@@ -1,3 +1,5 @@
+//! Parses info we need from a `.flt` file
+
 use std::collections::HashMap;
 use std::io;
 use std::io::prelude::*;
@@ -10,21 +12,46 @@ use crate::read_primitives::*;
 /// Information parsed from a .flt file, needed to make a .vhs file
 #[derive(Debug, Clone, Default)]
 pub struct Flight {
+    /// True if something went wrong reading the `.flt`
+    /// (ran out of bytes), bad reads, etc.
+    ///
+    /// We'll warn the user but still do the best with what we have.
     pub corrupted: bool,
+
+    /// Time of day offset
     pub tod_offset: f32,
+
+    /// Recording start time
     pub start_time: f32,
+
+    /// Recording end time
     pub end_time: f32,
+
+    /// Callsigns (16 byte blocks for strings) and faction colors.
+    ///
+    /// No idea how these map to entities (just 1 to 1 in the provided order?);
+    /// they're copied straight from the `.flt` to the `.vhs`
     pub callsigns: Vec<CallsignRecord>,
+
+    /// A map of unique IDs for entities (all moving objects in game)
+    /// to their position updates and events.
     pub entities: HashMap<i32, EntityData>,
+
+    /// A map of unique IDs for all features (static objects)
+    /// and their positions.
     pub features: HashMap<i32, FeatureData>,
+
+    /// "General" events not associated with any particular entities
     pub general_events: Vec<GeneralEvent>,
 
-    // Feature events aren't stored in FeatureData
-    // (like entity events are in EntityData).
-    //
-    // They need to be written chronologically
-    // (in the order they were in the `.flt` file),
-    // so we'd have to flatten it all back out into a vector anyways.
+    /// Feature events.
+    ///
+    /// Feature events aren't mapped to their features' UIDs in FeatureData
+    /// (like entity events are in EntityData).
+    ///
+    /// They need to be written chronologically
+    /// (or at least in the order they were in the `.flt` file),
+    /// so we'd have to flatten it all back out into a vector anyways.
     pub feature_events: Vec<FeatureEvent>,
 }
 
@@ -36,10 +63,12 @@ impl Flight {
             ..Default::default()
         };
 
+        // A .flt is a flat stream of events of different types,
+        // discriminated by a leading byte.
         loop {
             match read_record(&mut flight, &mut r) {
                 Ok(true) => { /* continue */ }
-                Ok(false) => break,
+                Ok(false) => break, // EOF
                 Err(e) => {
                     warn_on(e);
                     flight.corrupted = true;
@@ -48,9 +77,10 @@ impl Flight {
             }
         }
 
-        // Some entities get event, but never any position updates.
+        // Some entities get events, but never any position updates to place
+        // them in the world and provide their other needed state.
         // Very strange, but let's throw them out since we can't do anything
-        // with events for a entity that was never defined.
+        // with events for an entity that was never defined.
         let entities_to_chuck = flight
             .entities
             .iter()
@@ -75,6 +105,8 @@ impl Flight {
 }
 
 const ENTITY_FLAG_MISSILE: u32 = 0x00000001;
+// Used by the vhs module when writing features.
+// All entities store theirs, so we don't need to export the other flags.
 pub const ENTITY_FLAG_FEATURE: u32 = 0x00000002;
 const ENTITY_FLAG_AIRCRAFT: u32 = 0x00000004;
 const ENTITY_FLAG_CHAFF: u32 = 0x00000008;
@@ -89,7 +121,8 @@ pub struct EntityPositionUpdate {
     pub pitch: f32,
     pub roll: f32,
     pub yaw: f32,
-    /// UID of the current radar target
+
+    /// UID of the current radar target, or -1 if the entity doesn't have one.
     pub radar_target: i32,
 }
 
@@ -183,7 +216,7 @@ pub struct GeneralEvent {
     pub yaw: f32,
 }
 
-pub const REC_TYPE_GENERAL_POSITION: u8 = 0;
+const REC_TYPE_GENERAL_POSITION: u8 = 0;
 const REC_TYPE_MISSILE_POSITION: u8 = 1;
 const REC_TYPE_FEATURE_POSITION: u8 = 2;
 const REC_TYPE_AIRCRAFT_POSITION: u8 = 3;
@@ -313,8 +346,8 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             if let Some(first_def) = flight.features.get(&record.uid) {
                 if *first_def != feature {
                     warn!(
-                        "Feature {} defined multiple times with different data! {:?} vs. {:?}",
-                        record.uid, first_def, feature
+                        "Feature {} defined multiple times with different data! Ignoring subsequent ones",
+                        record.uid
                     );
                 }
                 return Ok(true);
@@ -445,6 +478,8 @@ fn warn_on(e: Error) {
     }
     warn!("Error reading flight: {}", e);
 }
+
+// Records read out of the `.flt` file.
 
 #[derive(Debug)]
 struct PositionRecord {

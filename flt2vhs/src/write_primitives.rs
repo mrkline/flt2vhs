@@ -1,3 +1,4 @@
+///! Utility functions for reading primitives from `.flt` files.
 use std::io::{Result, Write};
 
 /// Writes a byte to the provided writer

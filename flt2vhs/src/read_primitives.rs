@@ -1,3 +1,4 @@
+///! Utility functions for reading primitives from `.flt` files.
 use std::io::{Read, Result};
 
 /// Reads a little-endian u32 from the front of the provided reader
