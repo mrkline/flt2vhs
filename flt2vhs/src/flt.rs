@@ -282,14 +282,14 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
 
             if let Some(posit_data) = &entity_data.position_data {
                 if posit_data.kind != record.kind {
-                    warn!(
+                    trace!(
                         "Position update for entity {} switched kinds from {} to {}",
                         record.uid, posit_data.kind, record.kind
                     );
                 }
 
                 if posit_data.flags != flags {
-                    warn!(
+                    trace!(
                         "Position update for entity {} switched flags from {} to {}",
                         record.uid, posit_data.flags, flags
                     );
@@ -345,9 +345,11 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
 
             if let Some(first_def) = flight.features.get(&record.uid) {
                 if *first_def != feature {
-                    warn!(
-                        "Feature {} defined multiple times with different data! Ignoring subsequent ones",
-                        record.uid
+                    trace!(
+                        "Feature {} defined multiple times ({:?} -> {:?})! Ignoring subsequent ones",
+                        record.uid,
+                        first_def,
+                        feature
                     );
                 }
                 return Ok(true);
