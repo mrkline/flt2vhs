@@ -191,8 +191,10 @@ impl Header {
         // Let's debug print the header. It's fairly short,
         // and the offsets and counts are a good sanity check.
 
+        // Weird: acmi compiler sets this to the text event offset,
+        // not the actual length. TacView throws a fit if this isn't the case.
         debug!("File size: {}", self.file_length);
-        write_u32(self.file_length, w)?;
+        write_u32(self.text_event_offset, w)?;
 
         debug!("Entity count: {}", self.entity_count);
         write_u32(self.entity_count, w)?;
