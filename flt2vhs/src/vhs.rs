@@ -84,14 +84,16 @@ pub fn write<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
         &header,
         w,
     )?;
-    assert_eq!(w.get_posit(), header.position_offset);
 
+    assert_eq!(w.get_posit(), header.position_offset);
     write_entity_positions(flight, &entity_uids, w)?;
     write_feature_positions(flight, &feature_uids, w)?;
-    assert_eq!(w.get_posit(), header.entity_event_offset);
 
+    assert_eq!(w.get_posit(), header.entity_event_offset);
     write_entity_events(flight, &entity_uids, w)?;
+
     assert_eq!(w.get_posit(), header.general_event_offset);
+    write_general_events(flight, &header, w)?;
 
     print_timing("VHS write", &write_start);
     Ok(())
@@ -486,5 +488,53 @@ fn write_entity_events<W: Write>(
             previous_offset = current_offset;
         }
     }
+    Ok(())
+}
+
+struct GeneralEventTrailer {
+    stop: f32,
+    index: u32,
+}
+
+fn write_general_events<W: Write>(
+    flight: &Flight,
+    header: &Header,
+    w: &mut CountedWrite<W>,
+) -> Result<()> {
+    let mut trailers = Vec::with_capacity(flight.general_events.len());
+
+    for (i, event) in flight.general_events.iter().enumerate() {
+        let i = i as u32;
+        trailers.push(GeneralEventTrailer {
+            stop: event.stop,
+            index: i,
+        });
+
+        write_u8(event.type_byte, w)?;
+        write_u32(i, w)?;
+        write_f32(event.start, w)?;
+        write_f32(event.stop, w)?;
+        write_i32(event.kind, w)?;
+        write_i32(event.user, w)?;
+        write_u32(event.flags, w)?;
+        write_f32(event.scale, w)?;
+        write_f32(event.x, w)?;
+        write_f32(event.y, w)?;
+        write_f32(event.z, w)?;
+        write_f32(event.dx, w)?;
+        write_f32(event.dy, w)?;
+        write_f32(event.dz, w)?;
+        write_f32(event.roll, w)?;
+        write_f32(event.pitch, w)?;
+        write_f32(event.yaw, w)?;
+    }
+
+    assert_eq!(w.get_posit(), header.general_event_trailer_offset);
+    trailers.par_sort_by(|a, b| a.stop.partial_cmp(&b.stop).expect("Not NaNs!"));
+    for trailer in trailers {
+        write_f32(trailer.stop, w)?;
+        write_u32(trailer.index, w)?;
+    }
+
     Ok(())
 }
