@@ -1,6 +1,4 @@
 use std::fs::File;
-use std::io;
-use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -57,10 +55,9 @@ fn main() -> Result<()> {
     let default_output =
         Path::new(args.input.file_name().expect("No file name")).with_extension("vhs");
     let output = args.output.unwrap_or(default_output);
-    let mut vhs = open_vhs(&output)?;
+    let vhs = open_vhs(&output)?;
 
-    vhs::write(&parsed_flight, &mut vhs)?;
-    vhs.flush()?;
+    vhs::write(&parsed_flight, vhs)?;
 
     print_timing("Entire operation", &start_time);
     if parsed_flight.corrupted {
@@ -111,8 +108,8 @@ fn open_flt(f: &Path) -> Result<memmap::Mmap> {
     Ok(mapping)
 }
 
-fn open_vhs(to: &Path) -> Result<io::BufWriter<File>> {
+fn open_vhs(to: &Path) -> Result<File> {
     let fh =
         File::create(to).with_context(|| format!("Couldn't open {} to write", to.display()))?;
-    Ok(io::BufWriter::new(fh))
+    Ok(fh)
 }

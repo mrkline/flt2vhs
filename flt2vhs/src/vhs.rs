@@ -50,19 +50,35 @@ impl<W: Write> Write for CountedWrite<W> {
     }
 }
 
-pub fn write<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
+/// Writes out a VHS flight.
+///
+/// Will allocate a BufWriter based on expected file size;
+/// pass "raw" writer in.
+pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
+    // We want our FLT -> VHS conversion to be deterministic,
+    // so sort the UIDs instead of grabbing them in whatever order they come
+    // out of the hash map.
     let sort_start = Instant::now();
     let mut entity_uids = flight.entities.keys().copied().collect::<Vec<_>>();
-    entity_uids.par_sort();
+    entity_uids.sort();
     let mut feature_uids = flight.features.keys().copied().collect::<Vec<_>>();
-    feature_uids.par_sort();
+    feature_uids.sort();
     print_timing("Sorting UIDs", &sort_start);
 
     let write_start = Instant::now();
-    let mut counted = CountedWrite::new(w);
+
+    // Build the header, which will give us an idea of how big the file will be.
+    let header = Header::new(flight);
+
+    // Buffer writes up to 100 MB or the file size, whichever is smallest.
+    // (100 MB being "a round number that's not too much RAM."; play with this.)
+    let buf_size = std::cmp::min(100 * 1024 * 1024, header.file_length);
+    let buffered = io::BufWriter::with_capacity(buf_size as usize, w);
+    let mut counted = CountedWrite::new(buffered);
     let w = &mut counted;
 
-    let header = Header::new(flight);
+    let header_start = Instant::now();
+
     header.write(flight, w)?;
     assert_eq!(w.get_posit(), ENTITY_OFFSET);
 
@@ -103,6 +119,7 @@ pub fn write<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
 
     assert_eq!(w.get_posit(), header.file_length);
 
+    w.flush()?;
     print_timing("VHS write", &write_start);
     Ok(())
 }
