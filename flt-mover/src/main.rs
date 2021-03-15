@@ -26,19 +26,32 @@ struct Args {
     #[structopt(short = "C", long)]
     #[structopt(verbatim_doc_comment)]
     directory: Option<PathBuf>,
+
+    /// The program to convert FLT files to VHS
+    #[structopt(long, default_value = "flt2vhs.exe")]
+    converter: PathBuf,
+
+    /// Don't convert FLT files to VHS once they've been moved.
+    #[structopt(short, long)]
+    no_convert: bool,
+
+    /// Keep FLT files instead of deleting them after converting them.
+    /// Ignored if --no-convert is given
+    #[structopt(short, long, verbatim_doc_comment)]
+    keep: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::from_args();
     init_logger(args.verbose)?;
 
-    if let Some(change_to) = args.directory {
-        env::set_current_dir(&change_to).with_context(|| {
+    if let Some(change_to) = &args.directory {
+        env::set_current_dir(change_to).with_context(|| {
             format!("Couldn't set working directory to {}", change_to.display())
         })?;
     }
 
-    rename_flts()?;
+    rename_flts(&args)?;
 
     let (tx, rx) = channel();
     let mut watcher = raw_watcher(tx).unwrap();
@@ -50,7 +63,7 @@ fn main() -> Result<()> {
         match rx.recv_timeout(std::time::Duration::from_secs(1)) {
             // We don't actually care what the event was;
             // rescanning is cheap.
-            Ok(_) | Err(RecvTimeoutError::Timeout) => rename_flts()?,
+            Ok(_) | Err(RecvTimeoutError::Timeout) => rename_flts(&args)?,
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
@@ -68,21 +81,35 @@ fn find_first_flt() -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn rename_flts() -> Result<()> {
+fn rename_flts(args: &Args) -> Result<()> {
     while let Some(flt) = find_first_flt()? {
-        rename_flt(flt)?;
+        let renamed_to = rename_flt(flt)?;
+        if !args.no_convert {
+            let conversion_result = convert_flt(args, &renamed_to).and_then(|()| {
+                if args.keep {
+                    debug!("Keeping {} after its conversion", renamed_to.display());
+                } else {
+                    debug!("Deleting {} after its conversion", renamed_to.display());
+                    fs::remove_file(&renamed_to)?;
+                }
+                Ok(())
+            });
+            if let Err(e) = conversion_result {
+                warn!("{:?}", e);
+            }
+        }
     }
     Ok(())
 }
 
-fn rename_flt(to_rename: PathBuf) -> Result<()> {
+fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
     let mut rename_to = find_unique_rename(to_rename.clone());
 
     debug!("Trying to rename {}...", to_rename.display());
     match fs::rename(&to_rename, &rename_to) {
         Ok(()) => {
             info!("Renamed {} to {}", to_rename.display(), rename_to.display());
-            return Ok(());
+            return Ok(rename_to);
         }
         // Windows error 32: The file is being used by another process.
         Err(e) if e.raw_os_error() == Some(32) => {
@@ -91,7 +118,9 @@ fn rename_flt(to_rename: PathBuf) -> Result<()> {
                 to_rename.display()
             );
         }
-        other_error => return other_error.context("Renaming failed unexpectedly"),
+        Err(other_error) => {
+            return Err(Error::from(other_error).context("Renaming failed unexpectedly"))
+        }
     }
 
     // Try to open the .flt file in a loop - there's a brief window when BMS
@@ -145,7 +174,7 @@ fn rename_flt(to_rename: PathBuf) -> Result<()> {
     drop(flt_fh);
     fs::remove_file(to_rename)?;
 
-    Ok(())
+    Ok(rename_to)
 }
 
 // _TOCTOU: The Function_, but let's assume nothing's making a bunch of
@@ -164,6 +193,30 @@ fn find_unique_rename(to_rename: PathBuf) -> PathBuf {
             return PathBuf::from(numbered_name);
         }
         count += 1;
+    }
+}
+
+fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
+    debug!("Converting {} with {}", flt.display(), args.converter.display());
+
+    let mut proc = std::process::Command::new(&args.converter);
+    // Add a verbosity flag if it's flt2vhs.
+    // Don't for other programs since we shouldn't assume how their flags work
+    if args.converter == Path::new("flt2vhs.exe") && args.verbose > 0 {
+        proc.arg("-v");
+    }
+    proc.arg(flt);
+    let exit_status = proc
+        .status()
+        .with_context(|| format!("Couldn't run {}", args.converter.display()))?;
+    if exit_status.success() {
+        return Ok(());
+    } else {
+        bail!(
+            "{} failed to convert {}",
+            args.converter.display(),
+            flt.display()
+        );
     }
 }
 
