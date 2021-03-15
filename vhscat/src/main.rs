@@ -30,7 +30,6 @@ struct Args {
     timestamps: bool,
 
     /// The .VHS file to read
-    #[structopt(short, long)]
     input: Option<PathBuf>,
 }
 

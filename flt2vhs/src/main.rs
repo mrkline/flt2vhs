@@ -25,13 +25,13 @@ struct Args {
     #[structopt(short, long, verbatim_doc_comment)]
     timestamps: bool,
 
-    /// The .FLT file to read
-    #[structopt(short, long)]
-    input: PathBuf,
-
     /// The .VHS file to write
     #[structopt(short, long)]
     output: Option<PathBuf>,
+
+    /// The .FLT file to read
+    input: PathBuf,
+
 }
 
 pub fn print_timing(msg: &str, start: &Instant) {
