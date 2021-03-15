@@ -18,6 +18,14 @@ pub struct Flight {
     pub entities: HashMap<i32, EntityData>,
     pub features: HashMap<i32, FeatureData>,
     pub general_events: Vec<GeneralEvent>,
+
+    // Feature events aren't stored in FeatureData
+    // (like entity events are in EntityData).
+    //
+    // They need to be written chronologically
+    // (in the order they were in the `.flt` file),
+    // so we'd have to flatten it all back out into a vector anyways.
+    pub feature_events: Vec<FeatureEvent>,
 }
 
 impl Flight {
@@ -60,26 +68,6 @@ impl Flight {
         }
         for (uid, _) in entities_to_chuck {
             assert!(flight.entities.remove(&uid).is_some());
-        }
-
-        // Let's do the same with features...
-        let features_to_chuck = flight
-            .features
-            .iter()
-            .filter(|(_uid, data)| data.position_data.is_none())
-            .map(|(uid, data)| (*uid, data.events.len() as u32))
-            .collect::<Vec<(i32, u32)>>();
-        if !features_to_chuck.is_empty() {
-            debug!(
-                "{} features were never defined with position info, but have {} events",
-                features_to_chuck.len(),
-                features_to_chuck
-                    .iter()
-                    .fold(0, |acc, (_uid, events)| acc + events)
-            );
-        }
-        for (uid, _) in features_to_chuck {
-            assert!(flight.features.remove(&uid).is_some());
         }
 
         flight
@@ -155,14 +143,13 @@ pub struct EntityData {
 #[derive(Debug, Copy, Clone)]
 pub struct FeatureEvent {
     pub time: f32,
+    pub feature_uid: i32,
     pub new_status: i32,
     pub previous_status: i32,
 }
 
-/// Data gleaned from the feature's first (and hopefully only)
-/// position record.  (Contains things besides the position)
-#[derive(Debug, Copy, Clone)]
-pub struct FeaturePositionData {
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FeatureData {
     pub kind: i32,
     pub lead_uid: i32,
     pub slot: i32,
@@ -174,17 +161,6 @@ pub struct FeaturePositionData {
     pub pitch: f32,
     pub roll: f32,
     pub yaw: f32,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct FeatureData {
-    /// Sometimes events start arriving before the position data,
-    /// so fill that in when it arrives.
-    ///
-    /// TODO: Some features _never_ get position data; only events.
-    ///       Should we ignore events that arrive before a position for that UID?
-    pub position_data: Option<FeaturePositionData>,
-    pub events: Vec<FeatureEvent>,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -320,33 +296,32 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
         REC_TYPE_FEATURE_POSITION => {
             let record = FeaturePositionRecord::parse(r)?;
 
-            let feature_data = flight
-                .features
-                .entry(record.uid)
-                .or_insert_with(Default::default);
+            let feature = FeatureData {
+                kind: record.kind,
+                lead_uid: record.lead_uid,
+                slot: record.slot,
+                special_flags: record.special_flags,
+                time,
+                x: record.x,
+                y: record.y,
+                z: record.z,
+                pitch: record.pitch,
+                roll: record.roll,
+                yaw: record.yaw,
+            };
 
-            if feature_data.position_data.is_some() {
-                warn!(
-                    "Feature {} got multiple positions; using the first",
-                    record.uid
-                );
-            } else {
-                let position_data = FeaturePositionData {
-                    kind: record.kind,
-                    lead_uid: record.lead_uid,
-                    slot: record.slot,
-                    special_flags: record.special_flags,
-                    time,
-                    x: record.x,
-                    y: record.y,
-                    z: record.z,
-                    pitch: record.pitch,
-                    roll: record.roll,
-                    yaw: record.yaw,
-                };
-                trace!("New feature {}: {:?}", record.uid, position_data);
-                feature_data.position_data = Some(position_data);
+            if let Some(first_def) = flight.features.get(&record.uid) {
+                if *first_def != feature {
+                    warn!(
+                        "Feature {} defined multiple times with different data! {:?} vs. {:?}",
+                        record.uid, first_def, feature
+                    );
+                }
+                return Ok(true);
             }
+
+            trace!("New feature {}: {:?}", record.uid, feature);
+            assert!(flight.features.insert(record.uid, feature).is_none());
         }
         REC_TYPE_TRACER_START => {
             let record = TracerStartRecord::parse(r)?;
@@ -440,17 +415,17 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
         REC_TYPE_FEATURE_STATUS => {
             let record = FeatureEventRecord::read(r)?;
             // Look up the feature by its UID
-            let feature = flight
-                .features
-                .get_mut(&record.uid)
-                .ok_or_else(|| anyhow!("Couldn't find feature {} to add an event", record.uid))?;
+            if !flight.features.contains_key(&record.uid) {
+                bail!("Couldn't find feature {} to add an event", record.uid);
+            }
             let event = FeatureEvent {
                 time,
+                feature_uid: record.uid,
                 new_status: record.new_status,
                 previous_status: record.previous_status,
             };
-            trace!("Feature {} event: {:?}", record.uid, event);
-            feature.events.push(event);
+            trace!("Feature event: {:?}", event);
+            flight.feature_events.push(event);
         }
         REC_TYPE_CALLSIGN_LIST => flight.callsigns = parse_callsigns(r)?,
         wut => {

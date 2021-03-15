@@ -95,6 +95,14 @@ pub fn write<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
     assert_eq!(w.get_posit(), header.general_event_offset);
     write_general_events(flight, &header, w)?;
 
+    assert_eq!(w.get_posit(), header.feature_event_offset);
+    write_feature_events(flight, &feature_indexes, w)?;
+
+    assert_eq!(w.get_posit(), header.text_event_offset);
+    write_callsigns(flight, w)?;
+
+    assert_eq!(w.get_posit(), header.file_length);
+
     print_timing("VHS write", &write_start);
     Ok(())
 }
@@ -105,7 +113,6 @@ struct Header {
     feature_count: u32,
     position_count: u32,
     entity_event_count: u32,
-    feature_event_count: u32,
     feature_offset: u32,
     position_offset: u32,
     entity_event_offset: u32,
@@ -140,12 +147,6 @@ impl Header {
             .map(|d| d.events.len())
             .sum::<usize>() as u32;
 
-        let feature_event_count = flight
-            .features
-            .values()
-            .map(|d| d.events.len())
-            .sum::<usize>() as u32;
-
         let feature_offset = ENTITY_OFFSET + ENTITY_SIZE * entity_count;
 
         let position_offset = feature_offset + ENTITY_SIZE * feature_count;
@@ -162,7 +163,8 @@ impl Header {
         let feature_event_offset =
             general_event_trailer_offset + GENERAL_EVENT_TRAILER_SIZE * general_event_count;
 
-        let text_event_offset = feature_event_offset + FEATURE_EVENT_SIZE * feature_event_count;
+        let text_event_offset =
+            feature_event_offset + FEATURE_EVENT_SIZE * flight.feature_events.len() as u32;
 
         let file_length =
             text_event_offset + 4 + CALLSIGN_RECORD_SIZE * flight.callsigns.len() as u32;
@@ -172,7 +174,6 @@ impl Header {
             feature_count,
             position_count,
             entity_event_count,
-            feature_event_count,
             feature_offset,
             position_offset,
             entity_event_offset,
@@ -240,8 +241,8 @@ impl Header {
         debug!("Text event count: 0");
         write_u32(0, w)?;
 
-        debug!("Feature event count: {}", self.feature_event_count);
-        write_u32(self.feature_event_count, w)?;
+        debug!("Feature event count: {}", flight.feature_events.len());
+        write_u32(flight.feature_events.len() as u32, w)?;
 
         debug!("Start time: {}", flight.start_time);
         write_f32(flight.start_time, w)?;
@@ -341,9 +342,8 @@ fn write_features<W: Write>(
 
     for uid in sorted_uids {
         let feature = flight.features.get(uid).unwrap();
-        let data = feature.position_data.as_ref().unwrap();
         write_i32(*uid, w)?;
-        write_i32(data.kind, w)?;
+        write_i32(feature.kind, w)?;
 
         // Features don't play the same "type index" game entities do.
         write_i32(0, w)?;
@@ -351,10 +351,10 @@ fn write_features<W: Write>(
         write_u32(flt::ENTITY_FLAG_FEATURE, w)?;
 
         // Lead index
-        write_i32(*feature_indexes.get(&data.lead_uid).unwrap_or(&-1), w)?;
+        write_i32(*feature_indexes.get(&feature.lead_uid).unwrap_or(&-1), w)?;
 
-        write_i32(data.slot, w)?;
-        write_u32(data.special_flags, w)?;
+        write_i32(feature.slot, w)?;
+        write_u32(feature.special_flags, w)?;
 
         let position_offset = feature_position_offset + ENTITY_UPDATE_SIZE * position_index;
         assert!(position_offset >= feature_position_offset);
@@ -419,19 +419,18 @@ fn write_feature_positions<W: Write>(
 ) -> Result<()> {
     for uid in entity_uids {
         let feature = flight.features.get(uid).unwrap();
-        let data = feature.position_data.as_ref().unwrap();
 
-        write_f32(data.time, w)?;
+        write_f32(feature.time, w)?;
         // Updates are unions of position updates,
         // switch updates, and DOF updates.
         // The next byte is the union's tag/descriminant.
         write_u8(0, w)?;
-        write_f32(data.x, w)?;
-        write_f32(data.y, w)?;
-        write_f32(data.z, w)?;
-        write_f32(data.pitch, w)?;
-        write_f32(data.roll, w)?;
-        write_f32(data.yaw, w)?;
+        write_f32(feature.x, w)?;
+        write_f32(feature.y, w)?;
+        write_f32(feature.z, w)?;
+        write_f32(feature.pitch, w)?;
+        write_f32(feature.roll, w)?;
+        write_f32(feature.yaw, w)?;
         // Radar target
         write_i32(-1, w)?;
         // No previuos or next positions
@@ -536,5 +535,32 @@ fn write_general_events<W: Write>(
         write_u32(trailer.index, w)?;
     }
 
+    Ok(())
+}
+
+fn write_feature_events<W: Write>(
+    flight: &Flight,
+    feature_indexes: &HashMap<i32, i32>,
+    w: &mut CountedWrite<W>,
+) -> Result<()> {
+    for event in &flight.feature_events {
+        let index = *feature_indexes
+            .get(&event.feature_uid)
+            .expect("Feature event with no feature");
+        write_f32(event.time, w)?;
+        write_i32(index, w)?;
+        write_i32(event.new_status, w)?;
+        write_i32(event.previous_status, w)?;
+    }
+
+    Ok(())
+}
+
+fn write_callsigns<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
+    write_u32(flight.callsigns.len() as u32, w)?;
+    for callsign in &flight.callsigns {
+        w.write_all(&callsign.label)?;
+        write_i32(callsign.team_color, w)?;
+    }
     Ok(())
 }
