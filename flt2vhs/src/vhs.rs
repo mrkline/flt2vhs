@@ -261,7 +261,7 @@ impl Header {
 
         // Callsigns aren't text events - they're a separate thing that
         // don't seem to get saved anymore. Looking at the FreeFalcon code,
-        // seems like they were pulled from the game state and not the .FLT.
+        // seems like they were pulled from the game state and not the FLT.
         debug!("Text event count: 0");
         write_u32(0, w)?;
 

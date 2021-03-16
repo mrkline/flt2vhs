@@ -12,7 +12,7 @@ mod read_primitives;
 mod vhs;
 mod write_primitives;
 
-/// Converts a .FLT file to .VHS
+/// Converts a FLT file to VHS
 #[derive(Debug, StructOpt)]
 #[structopt(verbatim_doc_comment)]
 struct Args {
@@ -25,11 +25,11 @@ struct Args {
     #[structopt(short, long, verbatim_doc_comment)]
     timestamps: bool,
 
-    /// The .VHS file to write. Defaults to <input>.vhs
+    /// The VHS file to write. Defaults to <input>.vhs
     #[structopt(short, long, name = "VHS file")]
     output: Option<PathBuf>,
 
-    /// The .FLT file to read
+    /// The FLT file to read
     #[structopt(name = "input.flt")]
     input: PathBuf,
 

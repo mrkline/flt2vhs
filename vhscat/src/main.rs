@@ -13,7 +13,7 @@ mod read_primitives;
 
 use crate::acmitape::*;
 
-/// Reads a .VHS file to JSON
+/// Reads a VHS file to JSON
 ///
 /// Each data structure on the file is printed on its own line for easy diffing
 /// against other VHS files. Pipe into `jq` to pretty-print.
@@ -29,7 +29,8 @@ struct Args {
     #[structopt(short, long, verbatim_doc_comment)]
     timestamps: bool,
 
-    /// The .VHS file to read
+    /// The VHS file to read
+    #[structopt(name = "input.vhs")]
     input: Option<PathBuf>,
 }
 
@@ -114,7 +115,7 @@ impl<R: Read> Read for CountedRead<R> {
     }
 }
 
-/// Read (and print) the .VHS file
+/// Read (and print) the VHS file
 ///
 /// VHS files have a few sections:
 ///
