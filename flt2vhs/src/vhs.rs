@@ -212,7 +212,9 @@ impl Header {
 
         debug!("File size: {}", self.file_length);
         // Weird: acmi-compiler sets this to the text event offset,
-        // not the actual length. TacView throws a fit if this isn't the case.
+        // not the actual length, and it's just doing what FreeFalcon
+        // (so presumably F4 and BMS) do.
+        // TacView throws a fit if this isn't the case.
         write_u32(self.text_event_offset, w)?;
 
         debug!("Entity count: {}", self.entity_count);
@@ -257,8 +259,9 @@ impl Header {
         debug!("Entity event count: {}", self.entity_event_count);
         write_u32(self.entity_event_count, w)?;
 
-        // Why does acmi-compiler set this to zero?
-        // Don't the callsigns count?
+        // Callsigns aren't text events - they're a separate thing that
+        // don't seem to get saved anymore. Looking at the FreeFalcon code,
+        // seems like they were pulled from the game state and not the .FLT.
         debug!("Text event count: 0");
         write_u32(0, w)?;
 
