@@ -83,9 +83,3 @@ and VHS formats, and the legwork they
 to understand the formats in the first place is nothing short of impressive.
 Lohito was also kind enough to provide test files and expected outputs,
 which gave me good data to test against as I went.
-
-## TODO
-
-- Decrease disk write times by compressing with ZIP?
-  (Tacview can read a `.zip.vhs` just fine.)
-  We'd definitely want to do that in a separate thread.
