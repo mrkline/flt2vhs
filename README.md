@@ -5,6 +5,14 @@ A set of tools for converting
 from their initial format (`.flt` files) into their replay format (`.vhs`)
 in seconds, not minutes.
 
+## How do I use it?
+
+1. Extract `flt2vhs.exe` and `flt-mover.exe` into `BMS/User/Acmi/`.
+
+2. Run `flt-mover.exe` while you play BMS. As FLT files are finished,
+   they should be automatically moved out of BMS's way and converted to VHS.
+   (Optionally pass `-v` to have the tools print messages as they run.)
+
 ## Why?
 
 Running BMS with the `-acmi` flag or flipping the AVTR switch in the cockpit
