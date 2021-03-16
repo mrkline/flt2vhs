@@ -14,22 +14,25 @@ use notify::{raw_watcher, RecursiveMode, Watcher};
 use simplelog::*;
 use structopt::StructOpt;
 
-/// Monitors a directory and moves .flt files out from under BMS
+/// Monitors a directory and moves FLT files out from under BMS,
+/// then calls another program to convert them to VHS
 #[derive(Debug, StructOpt)]
 #[structopt(verbatim_doc_comment)]
 struct Args {
-    /// Verbosity (-v, -vv, -vvv, etc.)
+    /// Verbosity (-v, -vv, -vvv, etc.). Defaults to `-v`
     #[structopt(short, long, parse(from_occurrences))]
     verbose: u8,
 
     /// Switch to this working directory (e.g., BMS/User/Acmi)
     /// before doing anything else.
-    #[structopt(short = "C", long)]
+    #[structopt(short = "C", long, name = "path")]
     #[structopt(verbatim_doc_comment)]
     directory: Option<PathBuf>,
 
     /// The program to convert FLT files to VHS
-    #[structopt(long, default_value = "flt2vhs.exe")]
+    /// Assumed usage is `<converter> input.flt`
+    #[structopt(long, default_value = "flt2vhs.exe", name= "program")]
+    #[structopt(verbatim_doc_comment)]
     converter: PathBuf,
 
     /// Don't convert FLT files to VHS once they've been moved.
@@ -68,6 +71,28 @@ fn main() -> Result<()> {
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
+}
+
+/// Set up simplelog to spit messages to stderr.
+fn init_logger(verbosity: u8) -> Result<()> {
+    let mut builder = ConfigBuilder::new();
+    // Shut a bunch of stuff off - we're just spitting to stderr.
+    builder.set_location_level(LevelFilter::Trace);
+    builder.set_target_level(LevelFilter::Off);
+    builder.set_thread_level(LevelFilter::Off);
+    builder.set_time_level(LevelFilter::Off);
+
+    let level = match verbosity {
+        0 | 1 => LevelFilter::Info,
+        2 => LevelFilter::Debug,
+        _ => LevelFilter::Trace,
+    };
+
+    let config = builder.build();
+
+    TermLogger::init(level, config.clone(), TerminalMode::Stderr)
+        .or_else(|_| SimpleLogger::init(level, config))
+        .context("Couldn't init logger")
 }
 
 fn find_first_flt() -> Result<Option<PathBuf>> {
@@ -241,27 +266,4 @@ fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
             flt.display()
         );
     }
-}
-
-/// Set up simplelog to spit messages to stderr.
-fn init_logger(verbosity: u8) -> Result<()> {
-    let mut builder = ConfigBuilder::new();
-    // Shut a bunch of stuff off - we're just spitting to stderr.
-    builder.set_location_level(LevelFilter::Trace);
-    builder.set_target_level(LevelFilter::Off);
-    builder.set_thread_level(LevelFilter::Off);
-    builder.set_time_level(LevelFilter::Off);
-
-    let level = match verbosity {
-        0 => LevelFilter::Warn,
-        1 => LevelFilter::Info,
-        2 => LevelFilter::Debug,
-        _ => LevelFilter::Trace,
-    };
-
-    let config = builder.build();
-
-    TermLogger::init(level, config.clone(), TerminalMode::Stderr)
-        .or_else(|_| SimpleLogger::init(level, config))
-        .context("Couldn't init logger")
 }
