@@ -250,7 +250,7 @@ fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
     let mut proc = std::process::Command::new(&args.converter);
     // Add a verbosity flag if it's flt2vhs.
     // Don't for other programs since we shouldn't assume how their flags work
-    if args.converter == Path::new("flt2vhs.exe") && args.verbose > 0 {
+    if args.converter == Path::new("flt2vhs.exe") {
         proc.arg("-v");
     }
     proc.arg(flt);

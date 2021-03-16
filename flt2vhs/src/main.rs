@@ -25,11 +25,12 @@ struct Args {
     #[structopt(short, long, verbatim_doc_comment)]
     timestamps: bool,
 
-    /// The .VHS file to write
-    #[structopt(short, long)]
+    /// The .VHS file to write. Defaults to <input>.vhs
+    #[structopt(short, long, name = "VHS file")]
     output: Option<PathBuf>,
 
     /// The .FLT file to read
+    #[structopt(name = "input.flt")]
     input: PathBuf,
 
 }
@@ -42,6 +43,7 @@ fn main() -> Result<()> {
     let start_time = Instant::now();
 
     let args = Args::from_args();
+
     init_logger(args.verbose, args.timestamps)?;
     let mapping = open_flt(&args.input)?;
 
@@ -53,11 +55,11 @@ fn main() -> Result<()> {
     }
 
     let default_output =
-        Path::new(args.input.file_name().expect("No file name")).with_extension("vhs");
+        Path::new(args.input.file_name().unwrap()).with_extension("vhs");
     let output = args.output.unwrap_or(default_output);
-    let vhs = open_vhs(&output)?;
-
+    info!("Converting {} to {}", args.input.display(), output.display());
     let write_start = Instant::now();
+    let vhs = open_vhs(&output)?;
     vhs::write(&parsed_flight, vhs)?;
     print_timing("VHS write", &write_start);
 
