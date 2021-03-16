@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::*;
 
 use anyhow::*;
+use chrono::prelude::*;
 use log::*;
 use notify::{raw_watcher, RecursiveMode, Watcher};
 use simplelog::*;
@@ -103,7 +104,7 @@ fn rename_flts(args: &Args) -> Result<()> {
 }
 
 fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
-    let mut rename_to = find_unique_rename(to_rename.clone());
+    let rename_to = find_unique_rename(&to_rename);
 
     debug!("Trying to rename {}...", to_rename.display());
     match fs::rename(&to_rename, &rename_to) {
@@ -156,10 +157,6 @@ fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
     // Closing the .flt file handle and doing a rename is a bit racy -
     // it assumes that BMS has given up on trying to open it in the meantime.
     // Instead, just do a copy.
-
-    // It might have been a bit. Let's make sure our rename target
-    // is still a unique name.
-    rename_to = find_unique_rename(to_rename.clone());
     let mut renamed_fh = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -177,27 +174,53 @@ fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
     Ok(rename_to)
 }
 
-// _TOCTOU: The Function_, but let's assume nothing's making a bunch of
-// `.flt.moved.N` filenames as we go :P
-fn find_unique_rename(to_rename: PathBuf) -> PathBuf {
-    let mut new_name_base = to_rename.into_os_string();
-    new_name_base.push(".moved");
-    if !Path::new(&new_name_base).exists() {
-        return PathBuf::from(new_name_base);
-    }
-    let mut count = 1;
-    loop {
-        let mut numbered_name = new_name_base.clone();
-        numbered_name.push(&format!(".{}", count));
-        if !Path::new(&numbered_name).exists() {
-            return PathBuf::from(numbered_name);
+// _TOCTOU: The Function_, but let's assume nothing's making a bunch of FLT files
+// in the exact same second.
+fn find_unique_rename(to_rename: &Path) -> PathBuf {
+    use std::os::windows::fs::MetadataExt;
+
+    let now = Local::now();
+
+    match fs::metadata(to_rename).map(|meta| windows_timestamp(meta.creation_time())) {
+        Ok(Some(ct)) => {
+            let local = ct.with_timezone(now.offset());
+            PathBuf::from(format!("{}.flt", local.format("%Y-%m-%d_%H-%M-%S")))
         }
-        count += 1;
+        Ok(None) | Err(_) => {
+            trace!(
+                "Couldn't get creation time of {}. Falling back to current time",
+                to_rename.display()
+            );
+            PathBuf::from(format!("{}.flt", now.format("%Y-%m-%d_%H-%M-%S")))
+        }
+    }
+}
+
+fn windows_timestamp(ts: u64) -> Option<DateTime<Utc>> {
+    // Windows returns 100ns intervals since January 1, 1601
+    const TICKS_PER_SECOND: u64 = 1_000_000_000 / 100;
+
+    if ts == 0 {
+        None
+    }
+    else {
+        let seconds = ts / TICKS_PER_SECOND;
+        let nanos = (ts % TICKS_PER_SECOND) * 100;
+
+        Some(
+            Utc.ymd(1601, 1, 1).and_hms(0, 0, 0)
+                + chrono::Duration::seconds(seconds as i64)
+                + chrono::Duration::nanoseconds(nanos as i64),
+        )
     }
 }
 
 fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
-    debug!("Converting {} with {}", flt.display(), args.converter.display());
+    debug!(
+        "Converting {} with {}",
+        flt.display(),
+        args.converter.display()
+    );
 
     let mut proc = std::process::Command::new(&args.converter);
     // Add a verbosity flag if it's flt2vhs.
@@ -210,7 +233,7 @@ fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
         .status()
         .with_context(|| format!("Couldn't run {}", args.converter.display()))?;
     if exit_status.success() {
-        return Ok(());
+        Ok(())
     } else {
         bail!(
             "{} failed to convert {}",
