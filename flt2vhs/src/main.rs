@@ -43,10 +43,14 @@ fn main() -> Result<()> {
     let start_time = Instant::now();
 
     let args = Args::from_args();
-
     init_logger(args.verbose, args.timestamps)?;
-    let mapping = open_flt(&args.input)?;
 
+    let default_output =
+        Path::new(args.input.file_name().unwrap()).with_extension("vhs");
+    let output = args.output.unwrap_or(default_output);
+    info!("Converting {} to {}", args.input.display(), output.display());
+
+    let mapping = open_flt(&args.input)?;
     let parse_start = Instant::now();
     let parsed_flight = flt::Flight::parse(&*mapping);
     print_timing("FLT parse", &parse_start);
@@ -54,10 +58,6 @@ fn main() -> Result<()> {
         warn!("Flight file is corrupted! Doing what we can with what we have...");
     }
 
-    let default_output =
-        Path::new(args.input.file_name().unwrap()).with_extension("vhs");
-    let output = args.output.unwrap_or(default_output);
-    info!("Converting {} to {}", args.input.display(), output.display());
     let write_start = Instant::now();
     let vhs = open_vhs(&output)?;
     vhs::write(&parsed_flight, vhs)?;
