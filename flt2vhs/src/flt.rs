@@ -284,14 +284,18 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                 if posit_data.kind != record.kind {
                     trace!(
                         "Position update for entity {} switched kinds from {} to {}",
-                        record.uid, posit_data.kind, record.kind
+                        record.uid,
+                        posit_data.kind,
+                        record.kind
                     );
                 }
 
                 if posit_data.flags != flags {
                     trace!(
                         "Position update for entity {} switched flags from {} to {}",
-                        record.uid, posit_data.flags, flags
+                        record.uid,
+                        posit_data.flags,
+                        flags
                     );
                 }
             } else {

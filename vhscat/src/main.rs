@@ -41,14 +41,15 @@ fn main() -> Result<()> {
     let stdin = io::stdin();
 
     let input: Box<dyn io::Read> = match args.input {
-        None => {
-            Box::new(stdin.lock())
-        },
+        None => Box::new(stdin.lock()),
         Some(file) => {
             if file.to_string_lossy() == "-" {
                 Box::new(stdin.lock())
             } else {
-                Box::new(File::open(&file).with_context(|| format!("Couldn't open {}", file.display()))?)
+                Box::new(
+                    File::open(&file)
+                        .with_context(|| format!("Couldn't open {}", file.display()))?,
+                )
             }
         }
     };

@@ -31,7 +31,7 @@ struct Args {
 
     /// The program to convert FLT files to VHS
     /// Assumed usage is `<converter> input.flt`
-    #[structopt(long, default_value = "flt2vhs.exe", name= "program")]
+    #[structopt(long, default_value = "flt2vhs.exe", name = "program")]
     #[structopt(verbatim_doc_comment)]
     converter: PathBuf,
 
@@ -227,8 +227,7 @@ fn windows_timestamp(ts: u64) -> Option<DateTime<Utc>> {
 
     if ts == 0 {
         None
-    }
-    else {
+    } else {
         let seconds = ts / TICKS_PER_SECOND;
         let nanos = (ts % TICKS_PER_SECOND) * 100;
 

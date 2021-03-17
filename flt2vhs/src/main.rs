@@ -32,7 +32,6 @@ struct Args {
     /// The FLT file to read
     #[structopt(name = "input.flt")]
     input: PathBuf,
-
 }
 
 pub fn print_timing(msg: &str, start: &Instant) {
@@ -45,10 +44,13 @@ fn main() -> Result<()> {
     let args = Args::from_args();
     init_logger(args.verbose, args.timestamps)?;
 
-    let default_output =
-        Path::new(args.input.file_name().unwrap()).with_extension("vhs");
+    let default_output = Path::new(args.input.file_name().unwrap()).with_extension("vhs");
     let output = args.output.unwrap_or(default_output);
-    info!("Converting {} to {}", args.input.display(), output.display());
+    info!(
+        "Converting {} to {}",
+        args.input.display(),
+        output.display()
+    );
 
     let mapping = open_flt(&args.input)?;
     let parse_start = Instant::now();
