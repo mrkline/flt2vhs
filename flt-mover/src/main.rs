@@ -139,8 +139,8 @@ fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
         }
         // Windows error 32: The file is being used by another process.
         Err(e) if e.raw_os_error() == Some(32) => {
-            debug!(
-                "Permission denied renaming {}. Waiting for BMS to release the file...",
+            info!(
+                "{} is in use (presumably by BMS). Waiting...",
                 to_rename.display()
             );
         }
@@ -168,7 +168,7 @@ fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
             // Windows error 32: The file is being used by another process.
             Err(e) if e.raw_os_error() == Some(32) => {
                 trace!(
-                    "Couldn't open {}. Waiting for BMS to release it...",
+                    "Couldn't open {}, still in use. Trying again shortly...",
                     to_rename.display()
                 );
             }
