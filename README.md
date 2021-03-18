@@ -27,7 +27,7 @@ and you stare at a black screen.
 
 ## What?
 
-Since 2017, Lohito has provided a third-party tool called
+Since 2017, Loitho has provided a third-party tool called
 [ACMI-Compiler](https://github.com/loitho/acmi-compiler) that:
 
 1. Steals the FLT file from BMS in the brief time between when the game
@@ -81,10 +81,10 @@ Additionally,
 
 ## Thanks
 
-This wouldn't be possible without Lohito.
+This wouldn't be possible without Loitho.
 The ACMI-Compiler source - and his kind responses to my many silly questions -
 were instrumental to understanding the FLT and VHS formats.
 The legwork they [went through](https://www.benchmarksims.org/forum/showthread.php?32245-Beta-ACMI-compiler&highlight=acmi+compiler)
 to understand the formats in the first place is nothing short of impressive.
-Lohito was also kind enough to provide example FLT files and expected outputs,
+Loitho was also kind enough to provide example FLT files and expected outputs,
 which gave me great test data.
