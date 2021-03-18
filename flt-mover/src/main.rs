@@ -3,7 +3,6 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::io::prelude::*;
-use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::*;
 
@@ -129,6 +128,8 @@ fn rename_flts(args: &Args) -> Result<()> {
 }
 
 fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
+    use std::os::windows::fs::OpenOptionsExt;
+
     // At first, let's just try to add the suffix ".moved"
     // to files. This gets them out of the way of subsequent searches,
     // and if they're not being actively recorded by BMS,
