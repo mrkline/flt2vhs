@@ -753,7 +753,7 @@ fn parse_callsigns<R: Read>(r: &mut R) -> Result<Vec<CallsignRecord>> {
         callsign_count
     );
 
-    let mut callsigns = Vec::new();
+    let mut callsigns = Vec::with_capacity(callsign_count as usize);
 
     for _ in 0..callsign_count {
         callsigns.push(CallsignRecord::read(r)?);
