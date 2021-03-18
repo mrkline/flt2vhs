@@ -44,15 +44,11 @@ fn main() -> Result<()> {
     let args = Args::from_args();
     init_logger(args.verbose, args.timestamps)?;
 
-    let default_output = Path::new(args.input.file_name().unwrap()).with_extension("vhs");
-    let output = args.output.unwrap_or(default_output);
-    info!(
-        "Converting {} to {}",
-        args.input.display(),
-        output.display()
-    );
+    let input = args.input;
+    let output = args.output.ok_or(()).or_else(|_| default_output(&input))?;
+    info!("Converting {} to {}", input.display(), output.display());
 
-    let mapping = open_flt(&args.input)?;
+    let mapping = open_flt(&input)?;
     let parse_start = Instant::now();
     let parsed_flight = flt::Flight::parse(&*mapping);
     print_timing("FLT parse", &parse_start);
@@ -72,6 +68,20 @@ fn main() -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn default_output(input: &Path) -> Result<PathBuf> {
+    // Path::with_extension just replaces the last one.
+    // Replace ALL THE EXTENISONS!
+    let name = input
+        .file_name()
+        .ok_or_else(|| anyhow!("{} isn't a file name!", input.display()))?;
+    let as_str = name
+        .to_str()
+        .ok_or_else(|| anyhow!("Can't remove the extension from {}", input.display()))?;
+    Ok(PathBuf::from(
+        as_str.split('.').next().unwrap().to_owned() + ".vhs",
+    ))
 }
 
 /// Set up simplelog to spit messages to stderr.
