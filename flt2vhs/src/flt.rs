@@ -166,9 +166,6 @@ pub struct EntityPositionData {
 pub struct EntityData {
     /// Sometimes events start arriving before the position data,
     /// so fill that in when it arrives.
-    ///
-    /// TODO: Some entities _never_ get position data; only events.
-    ///       Should we ignore events that arrive before a position for that UID?
     pub position_data: Option<EntityPositionData>,
     pub events: Vec<EntityEvent>,
 }
