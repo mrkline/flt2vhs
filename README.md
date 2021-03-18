@@ -44,14 +44,13 @@ These tools do the same, but with a couple of improvments:
 2. **Even better performance:**
 
     - flt2vhs [memory maps](https://en.wikipedia.org/wiki/Memory-mapped_file#Benefits)
-      the FLT file. This improves performance for large files by reading directly
-      out of the operating system's page cache
-      instead of copying data between the OS and its own memory with each `read()`
-      [system call](https://en.wikipedia.org/wiki/System_call).
+      the FLT file. This improves performance by reading directly out of the
+      operating system's page cache instead of copying file data with each
+      `read()` [system call](https://en.wikipedia.org/wiki/System_call).
 
     - ACMI-Compiler stores events in a series of large arrays, very similar to
-      how they are stored in a VHS file. This simplifies actually writing the VHS,
-      but complicates everything else. Almost _all_ of the data has to be sorted,
+      how they are stored in the VHS file. This simplifies actually writing the VHS,
+      but complicates everything else. Nearly _all_ of the data has to be sorted,
       and many steps need to search through the arrays to find the data they need.
 
       flt2vhs organizes its data more efficiently.
