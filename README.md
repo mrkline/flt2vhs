@@ -7,7 +7,8 @@ in seconds, not minutes.
 
 ## How do I use it?
 
-1. Extract `flt2vhs.exe` and `flt-mover.exe` into `BMS/User/Acmi/`.
+1. Extract `flt2vhs.exe` and `flt-mover.exe` into `BMS/User/Acmi/`.  
+   (`vhscat.exe` can come too, but it's just a debug tool - see below.)
 
 2. Run `flt-mover.exe` while you play BMS. As FLT files are finished,
    they should be automatically moved out of BMS's way and converted to VHS.
