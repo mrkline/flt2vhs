@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::*;
+use humansize::{FileSize, file_size_opts as Sizes};
 use log::*;
 use simplelog::*;
 use structopt::StructOpt;
@@ -35,7 +36,7 @@ struct Args {
 }
 
 pub fn print_timing(msg: &str, start: &Instant) {
-    info!("{} took {:2.4}s", msg, start.elapsed().as_secs_f32());
+    info!("{} took {:.3}s", msg, start.elapsed().as_secs_f32());
 }
 
 fn main() -> Result<()> {
@@ -48,20 +49,29 @@ fn main() -> Result<()> {
     let output = args.output.ok_or(()).or_else(|_| default_output(&input))?;
     info!("Converting {} to {}", input.display(), output.display());
 
-    let mapping = open_flt(&input)?;
     let parse_start = Instant::now();
+    let mapping = open_flt(&input)?;
     let parsed_flight = flt::Flight::parse(&*mapping);
-    print_timing("FLT parse", &parse_start);
     if parsed_flight.corrupted {
         warn!("Flight file is corrupted! Doing what we can with what we have...");
     }
+    let flt_size = mapping.len();
+    drop(mapping);
+    print_timing("FLT parse", &parse_start);
 
     let write_start = Instant::now();
     let vhs = open_vhs(&output)?;
-    vhs::write(&parsed_flight, vhs)?;
+    let vhs_size = vhs::write(&parsed_flight, vhs)?;
     print_timing("VHS write", &write_start);
 
-    print_timing("Entire operation", &start_time);
+    let mut size_options = Sizes::CONVENTIONAL;
+    size_options.space = false;
+
+    info!("Took {:.3}s to convert {} FLT to {} VHS",
+          start_time.elapsed().as_secs_f32(),
+          flt_size.file_size(&size_options).unwrap(),
+          vhs_size.file_size(&size_options).unwrap(),
+    );
     if parsed_flight.corrupted {
         warn!("Converted corrupted FLT file, resulting VHS may be incomplete");
         std::process::exit(2); // Use a different error code than normal failure
@@ -118,7 +128,8 @@ fn init_logger(verbosity: u8, timestamps: bool) -> Result<()> {
 
 fn open_flt(f: &Path) -> Result<memmap::Mmap> {
     let fh = File::open(f).with_context(|| format!("Couldn't open {}", f.display()))?;
-    let mapping = unsafe { memmap::Mmap::map(&fh)? };
+    let mapping = unsafe { memmap::Mmap::map(&fh) }
+        .with_context(|| format!("Couldn't memory map {}", f.display()))?;
     // An madvise(MADV_SEQUENTIAL) might be nice here
     // since we're not seeking around.
     Ok(mapping)

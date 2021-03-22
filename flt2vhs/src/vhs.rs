@@ -56,7 +56,8 @@ impl<W: Write> Write for CountedWrite<W> {
 ///
 /// Will allocate a BufWriter based on expected file size;
 /// pass "raw" writer in.
-pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
+/// Returns the number of bytes written on success.
+pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
     // We want our FLT -> VHS conversion to be deterministic,
     // so sort the UIDs instead of grabbing them in whatever order they come
     // out of the hash map.
@@ -117,7 +118,7 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<()> {
     assert_eq!(w.get_posit(), header.file_length);
 
     w.flush()?;
-    Ok(())
+    Ok(w.get_posit())
 }
 
 /// Lots of sizes and offsets we need to write to the file header,
