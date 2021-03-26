@@ -1,5 +1,6 @@
 [workspace]
 members = ["flt2vhs", "vhscat", "flt-mover"]
+resolver = "2" # Try new dependency resolver from Rust 1.51
 
 [profile.dev]
 opt-level = 3 # We want debug builds be optimized + debug to benchmark them
