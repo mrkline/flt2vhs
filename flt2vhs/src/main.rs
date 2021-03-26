@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::*;
-use humansize::{FileSize, file_size_opts as Sizes};
+use humansize::{file_size_opts as Sizes, FileSize};
 use log::*;
 use structopt::StructOpt;
 
@@ -70,10 +70,11 @@ fn main() -> Result<()> {
     let mut size_options = Sizes::CONVENTIONAL;
     size_options.space = false;
 
-    info!("Took {:.3}s to convert {} FLT to {} VHS",
-          start_time.elapsed().as_secs_f32(),
-          flt_size.file_size(&size_options).unwrap(),
-          vhs_size.file_size(&size_options).unwrap(),
+    info!(
+        "Took {:.3}s to convert {} FLT to {} VHS",
+        start_time.elapsed().as_secs_f32(),
+        flt_size.file_size(&size_options).unwrap(),
+        vhs_size.file_size(&size_options).unwrap(),
     );
     if parsed_flight.corrupted {
         warn!("Converted corrupted FLT file, resulting VHS may be incomplete");

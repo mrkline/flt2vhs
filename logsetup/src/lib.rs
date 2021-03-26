@@ -1,6 +1,6 @@
 use anyhow::*;
-use structopt::clap::arg_enum;
 use simplelog::*;
+use structopt::clap::arg_enum;
 
 arg_enum! {
     #[derive(Debug, Copy, Clone)]
