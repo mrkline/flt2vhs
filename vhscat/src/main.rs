@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use anyhow::*;
 use log::*;
-use simplelog::*;
 use structopt::StructOpt;
 
 mod acmitape;
@@ -24,7 +23,11 @@ struct Args {
     #[structopt(short, long, parse(from_occurrences))]
     verbose: u8,
 
-    /// Prepend ISO-8601 timestamps to all trace messages
+    #[structopt(short, long, case_insensitive = true, default_value = "auto")]
+    #[structopt(name = "always/auto/never")]
+    color: logsetup::Color,
+
+    /// Prepend ISO-8601 timestamps to all messages
     /// (from --verbose). Useful for benchmarking.
     #[structopt(short, long, verbatim_doc_comment)]
     timestamps: bool,
@@ -36,7 +39,7 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::from_args();
-    init_logger(args.verbose, args.timestamps)?;
+    logsetup::init_logger(args.verbose, args.timestamps, args.color)?;
 
     let stdin = io::stdin();
 
@@ -57,38 +60,6 @@ fn main() -> Result<()> {
 
     read_vhs(r)?;
     Ok(())
-}
-
-/// Set up simplelog to spit messages to stderr.
-fn init_logger(verbosity: u8, timestamps: bool) -> Result<()> {
-    let mut builder = ConfigBuilder::new();
-    // Shut a bunch of stuff off - we're just spitting to stderr.
-    builder.set_location_level(LevelFilter::Trace);
-    builder.set_target_level(LevelFilter::Off);
-    builder.set_thread_level(LevelFilter::Off);
-    if timestamps {
-        builder.set_time_format_str("%+");
-        builder.set_time_level(LevelFilter::Error);
-    } else {
-        builder.set_time_level(LevelFilter::Off);
-    }
-
-    let level = match verbosity {
-        0 => LevelFilter::Warn,
-        1 => LevelFilter::Info,
-        2 => LevelFilter::Debug,
-        _ => LevelFilter::Trace,
-    };
-
-    let config = builder.build();
-
-    if cfg!(test) {
-        TestLogger::init(level, config).context("Couldn't init test logger")
-    } else {
-        TermLogger::init(level, config.clone(), TerminalMode::Stderr)
-            .or_else(|_| SimpleLogger::init(level, config))
-            .context("Couldn't init logger")
-    }
 }
 
 struct CountedRead<R> {

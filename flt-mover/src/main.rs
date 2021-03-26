@@ -10,7 +10,6 @@ use anyhow::*;
 use chrono::prelude::*;
 use log::*;
 use notify::{raw_watcher, RecursiveMode, Watcher};
-use simplelog::*;
 use structopt::StructOpt;
 
 /// Monitors a directory and moves FLT files out from under BMS,
@@ -21,6 +20,15 @@ struct Args {
     /// Verbosity (-v, -vv, -vvv, etc.). Defaults to `-v`
     #[structopt(short, long, parse(from_occurrences))]
     verbose: u8,
+
+    #[structopt(short, long, case_insensitive = true, default_value = "auto")]
+    #[structopt(name = "always/auto/never")]
+    color: logsetup::Color,
+
+    /// Prepend ISO-8601 timestamps to all messages
+    /// (from --verbose). Useful for benchmarking.
+    #[structopt(short, long, verbatim_doc_comment)]
+    timestamps: bool,
 
     /// Switch to this working directory (e.g., BMS/User/Acmi)
     /// before doing anything else.
@@ -46,7 +54,7 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::from_args();
-    init_logger(args.verbose)?;
+    logsetup::init_logger(std::cmp::max(1, args.verbose), args.timestamps, args.color)?;
 
     if let Some(change_to) = &args.directory {
         env::set_current_dir(change_to).with_context(|| {
@@ -70,28 +78,6 @@ fn main() -> Result<()> {
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
-}
-
-/// Set up simplelog to spit messages to stderr.
-fn init_logger(verbosity: u8) -> Result<()> {
-    let mut builder = ConfigBuilder::new();
-    // Shut a bunch of stuff off - we're just spitting to stderr.
-    builder.set_location_level(LevelFilter::Trace);
-    builder.set_target_level(LevelFilter::Off);
-    builder.set_thread_level(LevelFilter::Off);
-    builder.set_time_level(LevelFilter::Off);
-
-    let level = match verbosity {
-        0 | 1 => LevelFilter::Info,
-        2 => LevelFilter::Debug,
-        _ => LevelFilter::Trace,
-    };
-
-    let config = builder.build();
-
-    TermLogger::init(level, config.clone(), TerminalMode::Stderr)
-        .or_else(|_| SimpleLogger::init(level, config))
-        .context("Couldn't init logger")
 }
 
 fn find_first_flt() -> Result<Option<PathBuf>> {

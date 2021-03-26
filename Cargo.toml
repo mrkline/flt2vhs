@@ -1,5 +1,5 @@
 [workspace]
-members = ["flt2vhs", "vhscat", "flt-mover"]
+members = ["flt2vhs", "vhscat", "flt-mover", "logsetup"]
 resolver = "2" # Try new dependency resolver from Rust 1.51
 
 [profile.dev]
