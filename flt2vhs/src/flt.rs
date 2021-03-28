@@ -458,7 +458,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             };
             // Look up the feature by its UID
             if !flight.features.contains_key(&record.uid) {
-                warn!("No feature for {:?}", event);
+                trace!("No feature for {:?}", event);
                 return Ok(true);
             }
             trace!("Feature event: {:?}", event);
