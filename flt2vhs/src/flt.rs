@@ -364,7 +364,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             let event = GeneralEvent {
                 type_byte,
                 start: time,
-                stop: time + 2.5, // Matches acmi-compiler
+                stop: time + 5.0, // Should we make this configurable?
                 x: record.x,
                 y: record.y,
                 z: record.z,
