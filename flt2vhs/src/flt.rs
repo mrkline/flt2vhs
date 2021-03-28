@@ -464,7 +464,12 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             trace!("Feature event: {:?}", event);
             flight.feature_events.push(event);
         }
-        REC_TYPE_CALLSIGN_LIST => flight.callsigns = parse_callsigns(r)?,
+        REC_TYPE_CALLSIGN_LIST => {
+            if !flight.callsigns.is_empty() {
+                warn!("Multiple callsign lists found, using the latest");
+            }
+            flight.callsigns = parse_callsigns(r)?;
+        }
         wut => {
             bail!("Unknown enity type {} (0-13 are valid)", wut);
         }
