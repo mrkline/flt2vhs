@@ -143,7 +143,7 @@ dependencies = [
 
 [[package]]
 name = "flt-mover"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "flt2vhs"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "humansize",

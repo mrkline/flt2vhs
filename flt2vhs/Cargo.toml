@@ -1,6 +1,6 @@
 [package]
 name = "flt2vhs"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Matt Kline <matt@bitbashing.io>"]
 edition = "2018"
 
