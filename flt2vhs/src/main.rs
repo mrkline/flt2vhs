@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -28,6 +28,10 @@ struct Args {
     /// (from --verbose). Useful for benchmarking.
     #[structopt(short, long, verbatim_doc_comment)]
     timestamps: bool,
+
+    /// Delete the FLT file after successful conversion to VHS
+    #[structopt(short, long)]
+    delete: bool,
 
     /// The VHS file to write. Defaults to <input>.vhs
     #[structopt(short, long, name = "VHS file")]
@@ -80,6 +84,10 @@ fn main() -> Result<()> {
         warn!("Converted corrupted FLT file, resulting VHS may be incomplete");
         std::process::exit(2); // Use a different error code than normal failure
     } else {
+        if args.delete {
+            debug!("Deleting {} after its conversion", input.display());
+            fs::remove_file(&input)?;
+        }
         Ok(())
     }
 }

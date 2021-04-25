@@ -96,16 +96,7 @@ fn rename_flts(args: &Args) -> Result<()> {
     while let Some(flt) = find_first_flt()? {
         let renamed_to = rename_flt(flt)?;
         if !args.no_convert {
-            let conversion_result = convert_flt(args, &renamed_to).and_then(|()| {
-                if args.keep {
-                    debug!("Keeping {} after its conversion", renamed_to.display());
-                } else {
-                    debug!("Deleting {} after its conversion", renamed_to.display());
-                    fs::remove_file(&renamed_to)?;
-                }
-                Ok(())
-            });
-            if let Err(e) = conversion_result {
+            if let Err(e) = convert_flt(args, &renamed_to) {
                 warn!("{:?}", e);
             }
         }
@@ -276,6 +267,9 @@ fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
     // Don't for other programs since we shouldn't assume how their flags work
     if args.converter == Path::new("flt2vhs.exe") {
         proc.arg("-v");
+        if !args.keep {
+            proc.arg("--delete");
+        }
     }
     proc.arg(flt);
     let exit_status = proc
