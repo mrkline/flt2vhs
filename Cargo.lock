@@ -163,8 +163,6 @@ dependencies = [
  "logsetup",
  "memmap",
  "rayon",
- "serde",
- "serde_derive",
  "structopt",
 ]
 
