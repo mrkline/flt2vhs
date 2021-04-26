@@ -79,6 +79,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert-all-flts"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "log",
+ "logsetup",
+ "notify",
+ "structopt",
+]
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -154,18 +166,6 @@ dependencies = [
  "libc",
  "redox_syscall",
  "winapi 0.3.9",
-]
-
-[[package]]
-name = "flt-mover"
-version = "0.7.0"
-dependencies = [
- "anyhow",
- "chrono",
- "log",
- "logsetup",
- "notify",
- "structopt",
 ]
 
 [[package]]

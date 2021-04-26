@@ -12,8 +12,8 @@ use log::*;
 use notify::{raw_watcher, RecursiveMode, Watcher};
 use structopt::StructOpt;
 
-/// Monitors a directory and moves FLT files out from under BMS,
-/// then calls another program to convert them to VHS
+/// Converts all FLT files in the directory to VHS,
+/// then waits for BMS to make more.
 #[derive(Debug, StructOpt)]
 #[structopt(verbatim_doc_comment)]
 struct Args {

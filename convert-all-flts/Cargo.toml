@@ -1,5 +1,5 @@
 [package]
-name = "flt-mover"
+name = "convert-all-flts"
 version = "0.7.0"
 authors = ["Matt Kline <matt@bitbashing.io>"]
 edition = "2018"
