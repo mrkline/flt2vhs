@@ -10,7 +10,9 @@ in seconds, not minutes.
 1. Run `patch-bms-novhs.exe` to stop BMS from trying to (slowly)
    convert recorded FLT files to VHS.
 
-2. Drag a FLT file onto `flt2vhs.exe` to convert it to VHS
+2. Drag a FLT file onto `flt2vhs.exe` to convert it to VHS, _or_  
+   Run `flt-rename.exe` to convert all FLT files to VHS,
+   with names based on the times they were created.
 
 For the CLI-inclined, see the tools' `--help` for more options.
 
