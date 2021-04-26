@@ -33,6 +33,10 @@ struct Args {
     #[structopt(short, long)]
     delete: bool,
 
+    /// Overwrite output files, even if input was corrupted.
+    #[structopt(short, long)]
+    force: bool,
+
     /// The VHS file to write. Defaults to <input>.vhs
     #[structopt(short, long, name = "VHS file")]
     output: Option<PathBuf>,
@@ -72,6 +76,20 @@ fn run() -> Result<()> {
     let flt_size = mapping.len();
     drop(mapping);
     print_timing("FLT parse", &parse_start);
+
+    if !args.force && parsed_flight.corrupted {
+        if input == output {
+            bail!(
+                "{} looks like a VHS file! Quitting before we overwrite it",
+                input.display()
+            );
+        } else if output.exists() {
+            bail!(
+                "Refusing to overwrite {} with a corrupted recording without --force",
+                output.display()
+            );
+        }
+    }
 
     let write_start = Instant::now();
     let vhs = open_vhs(&output)?;
