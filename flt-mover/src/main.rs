@@ -107,11 +107,7 @@ fn rename_flts(args: &Args) -> Result<()> {
 fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
     use std::os::windows::fs::OpenOptionsExt;
 
-    // At first, let's just try to add the suffix ".moved"
-    // to files. This gets them out of the way of subsequent searches,
-    // and if they're not being actively recorded by BMS,
-    // a timestamp name doesn't make a lot of sense.
-    let mut rename_to = new_name(&to_rename, Naming::SuffixOnly);
+    let rename_to = timestamp_name(&to_rename);
 
     debug!("Trying to rename {}...", to_rename.display());
     match fs::rename(&to_rename, &rename_to) {
@@ -161,11 +157,6 @@ fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
         }
     };
 
-    // If it's a file that BMS was writing to, use the current timestamp.
-    // This is more helpful than "acmi0000.flt" and also avoids the problem
-    // of subsequent renames overwriting "acmi0000.flt.moved"
-    rename_to = new_name(&to_rename, Naming::ByDate);
-
     // Closing the .flt file handle and doing a rename is a bit racy -
     // it assumes that BMS has given up on trying to open it in the meantime.
     // Instead, just do a copy.
@@ -186,26 +177,7 @@ fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
     Ok(rename_to)
 }
 
-#[derive(Debug, Copy, Clone)]
-enum Naming {
-    /// Just add `.moved`
-    SuffixOnly,
-    /// Rename to `<timestamp>.flt.moved`
-    ByDate,
-}
-
 const MOVED_SUFFIX: &str = ".moved";
-
-fn new_name(to_rename: &Path, naming: Naming) -> PathBuf {
-    match naming {
-        Naming::SuffixOnly => {
-            let mut with_suffix = to_rename.to_owned().into_os_string();
-            with_suffix.push(MOVED_SUFFIX);
-            PathBuf::from(with_suffix)
-        }
-        Naming::ByDate => timestamp_name(to_rename),
-    }
-}
 
 // _TOCTOU: The Function_, but let's assume nothing's making a bunch of FLT files
 // in the exact same second.
