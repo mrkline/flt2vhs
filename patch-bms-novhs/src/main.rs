@@ -35,6 +35,12 @@ fn main() {
     });
 }
 
+struct Patch {
+    offset: usize,
+    original: &'static [u8],
+    replacement: &'static [u8],
+}
+
 fn run() -> Result<()> {
     let args = Args::from_args();
     logsetup::init_logger(args.verbose, false, args.color)?;
@@ -43,7 +49,24 @@ fn run() -> Result<()> {
     let mut map = open_bms(&bms_path)?;
     ensure_bms(&map)?;
 
-    patch_call(&mut map, 0x4dcf68, args.restore)?;
+    const REPLACEMENT_NOP: &[u8] = &[0x0f, 0x1f, 0x44, 0x00, 0x00]; // lea eax, eax * 1 + 0
+
+    let patches = vec![
+        Patch {
+            offset: 0x00022544,
+            original: &[0xe8, 0x87, 0x55, 0x00, 0x00],
+            replacement: REPLACEMENT_NOP,
+        },
+        Patch {
+            offset: 0x004dcf68,
+            original: &[0xe8, 0x63, 0xab, 0xb4, 0xff],
+            replacement: REPLACEMENT_NOP,
+        },
+    ];
+
+    for patch in &patches {
+        patch_call(&mut map, patch, args.restore)?;
+    }
 
     if args.restore {
         info!("BMS restored to its original state")
@@ -54,45 +77,44 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn patch_call(map: &mut [u8], addr: usize, restore: bool) -> Result<()> {
-    let call_to_nop = &mut map[addr..addr + 5];
+fn patch_call(map: &mut [u8], patch: &Patch, restore: bool) -> Result<()> {
+    assert_eq!(patch.original.len(), patch.replacement.len());
+
+    let patch_len = patch.original.len();
+    let call_to_nop = &mut map[patch.offset..patch.offset + patch_len];
     ensure!(
-        call_to_nop.len() == 5,
+        call_to_nop.len() == patch_len,
         "EXE is too short - are you sure this is BMS 4.35U1?"
     );
 
-    const ORIGINAL_CALL: &[u8] = &[0xe8, 0x63, 0xab, 0xb4, 0xff];
-    const REPLACEMENT_NOP: &[u8] = &[0x0f, 0x1f, 0x44, 0x00, 0x00]; // lea eax, eax * 1 + 0
-
     if restore {
-        match call_to_nop as &[u8] {
-            ORIGINAL_CALL => {
-                debug!(
-                    "ACMI_ImportFile call at {:x} is unmodified; nothing to do!",
-                    addr
-                );
-            }
-            REPLACEMENT_NOP => {
-                debug!("Restoring call to ACMI_ImportFile at {:x}", addr);
-                call_to_nop.copy_from_slice(ORIGINAL_CALL);
-            }
-            _ => bail!("Unexpected bytes at {:x}: {:x?}", addr, call_to_nop),
+        if call_to_nop == patch.original {
+            debug!(
+                "ACMI_ImportFile call at {:x} is unmodified; nothing to do!",
+                patch.offset
+            );
+        } else if call_to_nop == patch.replacement {
+            debug!("Restoring call to ACMI_ImportFile at {:x}", patch.offset);
+            call_to_nop.copy_from_slice(patch.original);
+        } else {
+            bail!("Unexpected bytes at {:x}: {:x?}", patch.offset, call_to_nop);
         }
     } else {
-        match call_to_nop as &[u8] {
-            ORIGINAL_CALL => {
-                debug!("Replacing call to ACMI_ImportFile at {:x} with no-op", addr);
-                call_to_nop.copy_from_slice(REPLACEMENT_NOP);
-            }
-            REPLACEMENT_NOP => {
-                debug!(
-                    "ACMI_ImportFile call at {:x} is already no-op'd; nothing to do!",
-                    addr
-                );
-            }
-            _ => bail!("Unexpected bytes at {:x}: {:x?}", addr, call_to_nop),
+        if call_to_nop == patch.original {
+            debug!(
+                "Replacing call to ACMI_ImportFile at {:x} with no-op",
+                patch.offset
+            );
+            call_to_nop.copy_from_slice(patch.replacement);
+        } else if call_to_nop == patch.replacement {
+            debug!(
+                "ACMI_ImportFile call at {:x} is already no-op'd; nothing to do!",
+                patch.offset
+            );
+        } else {
+            bail!("Unexpected bytes at {:x}: {:x?}", patch.offset, call_to_nop);
         }
-    };
+    }
     Ok(())
 }
 
@@ -137,9 +159,7 @@ fn find_bms_from_registry() -> Result<PathBuf> {
         .value("baseDir")
         .context("Couldn't find BMS baseDir registry value")?
     {
-        Data::String(wide) => {
-            Ok(Path::new(&wide.to_os_string()).join("Bin/x64/Falcon BMS.exe"))
-        }
+        Data::String(wide) => Ok(Path::new(&wide.to_os_string()).join("Bin/x64/Falcon BMS.exe")),
         _ => bail!("Expected a string for BMS baseDir, got something else"),
     }
 }
