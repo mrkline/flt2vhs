@@ -7,26 +7,31 @@ in seconds, not minutes.
 
 ## How do I use it?
 
-1. Run `patch-bms-novhs.exe` to stop BMS from trying to (slowly)
-   convert recorded FLT files to VHS.
+1. Extract the 7zip archive into `BMS/User/Acmi`.
 
-2. Drag a FLT file onto `flt2vhs.exe` to convert it to VHS, _or_  
-   Run `flt-rename.exe` to convert all FLT files to VHS,
+2. Run `patch-bms-novhs.exe` to disable BMS's (slow) FLT to VHS conversion.
+   You only need to do this once.
+
+3. Record BMS flights normally with the AVTR switch in the cockpit,
+   or by running BMS with `-acmi`. BMS should no longer pause to convert
+   recordings when you exit 3D.
+
+4. Run `convert-all-flts.exe` to convert all FLT files to VHS,
    with names based on the times they were created.
+   Or drag a FLT file file onto `flt2vhs.exe` to convert one at a time.
 
-For the CLI-inclined, see the tools' `--help` for more options.
+For the CLI-inclined, see each tool's `--help` for more options.
 
 ## Why?
 
 Running BMS with the `-acmi` flag or flipping the AVTR switch in the cockpit
-writes out a recording of your flight. However, before it can be viewed in tools
-like [Tacview](https://www.tacview.net/product/en/), it needs to be converted
+records your flight, but before it can be viewed in tools like
+[Tacview](https://www.tacview.net/product/en/), it needs to be converted
 from one format (FLT) to another (VHS).
 
-As of version 4.35, BMS is painfully slow to do so.
+As of version 4.35U1, BMS's conversion is painfully slow.
 For 30+ minute flights with lots of planes and vehicles moving around,
-the conversion takes several minutes, during which the game is unresponsive
-and you stare at a black screen.
+the conversion takes several minutes, during which you stare at a black screen.
 
 ## What?
 
@@ -38,10 +43,11 @@ Since 2017, Loitho has provided a third-party tool called
 
 2. Performs the FLT -> VHS conversion itself in seconds.
 
-These tools do the same, but with a couple of improvments:
+These project does much of the same, but with major improvments:
 
-1. **No interactivity:** No need to do anything besides launch a program!
-   flt-mover will automatically start converting FLT files as BMS finishes them.
+1. **Nothing to run in the background:** Instead of running a background program
+   to steal FLT files from BMS, flt2vhs ships with a tool (`patch-bms-novhs`)
+   that just disables BMS's slow conversion.
 
 2. **Even better performance:**
 
@@ -73,12 +79,13 @@ These tools do the same, but with a couple of improvments:
 Additionally,
 
 1. In the spirit of the [Unix philosophy](https://en.wikipedia.org/wiki/Unix_philosophy),
-   "make each program do one thing well", functionality is split into two programs:
-   `flt-mover`, which steals the FLT files from BMS, and `flt2vhs`, which...
-   takes a FLT file and converts it to VHS. A tool to print VHS files as JSON,
-   `vhscat`, is also provided for debugging purposes.
+   "make each program do one thing well", functionality is split into a couple programs:
+   `patch-bms-novhs` patches BMS, `flt2vhs` handles the actual FLT to VHS conversion,
+   and `convert-all-flts` runs `flt2vhs` on each FLT file in the directory
+   (including any in-progress ones from BMS).
+   A tool to print VHS files as JSON, `vhscat`, is also provided for debugging.
 
-2. Everything but `flt-mover` is entirely cross-platform and can be
+2. Everything but `convert-all-flts` is entirely cross-platform and can be
    built/run/tested on Linux or MacOS.
 
 ## Thanks
