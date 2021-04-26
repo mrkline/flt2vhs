@@ -46,7 +46,14 @@ pub fn print_timing(msg: &str, start: &Instant) {
     info!("{} took {:.3}s", msg, start.elapsed().as_secs_f32());
 }
 
-fn main() -> Result<()> {
+fn main() {
+    run().unwrap_or_else(|e| {
+        error!("{:?}", e);
+        std::process::exit(1);
+    });
+}
+
+fn run() -> Result<()> {
     let start_time = Instant::now();
 
     let args = Args::from_args();

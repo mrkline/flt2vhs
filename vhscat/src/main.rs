@@ -37,7 +37,14 @@ struct Args {
     input: Option<PathBuf>,
 }
 
-fn main() -> Result<()> {
+fn main() {
+    run().unwrap_or_else(|e| {
+        error!("{:?}", e);
+        std::process::exit(1);
+    });
+}
+
+fn run() -> Result<()> {
     let args = Args::from_args();
     logsetup::init_logger(args.verbose, args.timestamps, args.color)?;
 

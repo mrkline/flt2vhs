@@ -28,17 +28,17 @@ struct Args {
     input: Option<PathBuf>,
 }
 
+struct Patch {
+    offset: usize,
+    original: &'static [u8],
+    replacement: &'static [u8],
+}
+
 fn main() {
     run().unwrap_or_else(|e| {
         error!("{:?}", e);
         std::process::exit(1);
     });
-}
-
-struct Patch {
-    offset: usize,
-    original: &'static [u8],
-    replacement: &'static [u8],
 }
 
 fn run() -> Result<()> {
