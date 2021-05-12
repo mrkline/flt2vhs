@@ -7,7 +7,7 @@ use std::io::prelude::*;
 use anyhow::*;
 use log::*;
 
-use crate::read_primitives::*;
+use crate::primitives::*;
 
 /// Information parsed from a .flt file, needed to make a .vhs file
 #[derive(Debug, Clone, Default)]

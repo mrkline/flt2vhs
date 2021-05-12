@@ -9,7 +9,7 @@ use log::*;
 use rayon::prelude::*;
 
 use crate::flt::{self, Flight};
-use crate::write_primitives::*;
+use crate::primitives::*;
 
 /// The header is 80 bytes long; entities start after.
 const ENTITY_OFFSET: u32 = 80;

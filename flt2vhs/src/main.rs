@@ -8,9 +8,8 @@ use log::*;
 use structopt::StructOpt;
 
 mod flt;
-mod read_primitives;
+mod primitives;
 mod vhs;
-mod write_primitives;
 
 /// Converts a FLT file to VHS
 #[derive(Debug, StructOpt)]
