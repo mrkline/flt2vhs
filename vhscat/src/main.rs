@@ -46,7 +46,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = Args::from_args();
-    logsetup::init_logger(args.verbose, args.timestamps, args.color)?;
+    logsetup::init_logger(args.verbose, args.timestamps, args.color);
 
     let stdin = io::stdin();
 

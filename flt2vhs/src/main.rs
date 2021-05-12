@@ -60,7 +60,7 @@ fn run() -> Result<()> {
     let start_time = Instant::now();
 
     let args = Args::from_args();
-    logsetup::init_logger(args.verbose, args.timestamps, args.color)?;
+    logsetup::init_logger(args.verbose, args.timestamps, args.color);
 
     let input = args.input;
     let output = args.output.ok_or(()).or_else(|_| default_output(&input))?;

@@ -61,7 +61,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = Args::from_args();
-    logsetup::init_logger(std::cmp::max(1, args.verbose), args.timestamps, args.color)?;
+    logsetup::init_logger(std::cmp::max(1, args.verbose), args.timestamps, args.color);
 
     if let Some(change_to) = &args.directory {
         env::set_current_dir(change_to).with_context(|| {

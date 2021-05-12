@@ -43,7 +43,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = Args::from_args();
-    logsetup::init_logger(std::cmp::max(1, args.verbose), false, args.color)?;
+    logsetup::init_logger(std::cmp::max(1, args.verbose), false, args.color);
 
     let bms_path = find_bms(args.input)?;
     let mut map = open_bms(&bms_path)?;
