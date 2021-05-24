@@ -185,8 +185,9 @@ impl Header {
         let text_event_offset =
             feature_event_offset + FEATURE_EVENT_SIZE * flight.feature_events.len() as u32;
 
-        let file_length =
-            text_event_offset + 4 + CALLSIGN_RECORD_SIZE * flight.callsigns.len() as u32;
+        let callsign_array_len = *flight.callsigns.keys().rev().next().unwrap() as u32 + 1;
+
+        let file_length = text_event_offset + 4 + CALLSIGN_RECORD_SIZE * callsign_array_len;
 
         Self {
             entity_count,
@@ -597,10 +598,31 @@ fn write_feature_events<W: Write>(
 }
 
 fn write_callsigns<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
-    write_u32(flight.callsigns.len() as u32, w)?;
-    for callsign in &flight.callsigns {
+    if flight.callsigns.is_empty() {
+        warn!("No callsigns to save!");
+        write_u32(0, w)?;
+        return Ok(());
+    }
+
+    // Callsign data is a sparse array where indexing by ID
+    // gives you name and faction.
+    let callsign_array_len = *flight.callsigns.keys().rev().next().unwrap() as u32 + 1;
+    write_u32(callsign_array_len, w)?;
+
+    let empty = flt::CallsignRecord::default();
+    let mut callsigns_written = 0;
+
+    for (id, callsign) in &flight.callsigns {
+        while callsigns_written < *id as u32 {
+            w.write_all(&empty.label)?;
+            write_i32(empty.team_color, w)?;
+            callsigns_written += 1;
+        }
+
         w.write_all(&callsign.label)?;
         write_i32(callsign.team_color, w)?;
+        callsigns_written += 1;
     }
+    assert_eq!(callsigns_written, callsign_array_len);
     Ok(())
 }

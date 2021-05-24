@@ -1,8 +1,13 @@
+#![allow(clippy::float_cmp)]
 //! Parses info we need from a `.flt` file
 
-use std::collections::HashMap;
-use std::io;
-use std::io::prelude::*;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    io,
+    io::prelude::*,
+    path::Path,
+    time::Instant,
+};
 
 use anyhow::*;
 use log::*;
@@ -27,11 +32,10 @@ pub struct Flight {
     /// Recording end time
     pub end_time: f32,
 
-    /// Callsigns (16 byte blocks for strings) and faction colors.
+    /// Map entity & feature UIDs to callsigns (16 byte blocks for strings) and faction colors.
     ///
-    /// No idea how these map to entities (just 1 to 1 in the provided order?);
-    /// they're copied straight from the `.flt` to the `.vhs`
-    pub callsigns: Vec<CallsignRecord>,
+    /// Use an ordered map to quickly inflate it back to an array on VHS write.
+    pub callsigns: BTreeMap<i32, CallsignRecord>,
 
     /// A map of unique IDs for entities (all moving objects in game)
     /// to their position updates and events.
@@ -101,6 +105,231 @@ impl Flight {
         }
 
         flight
+    }
+
+    pub fn merge(
+        &mut self,
+        next_flight: &Flight,
+        previous_flight_path: &Path,
+        next_flight_path: &Path,
+    ) -> bool {
+        let previous_flight_path = previous_flight_path.display();
+        let next_flight_path = next_flight_path.display();
+
+        debug!(
+            "Considering if {} and {} should be merged...",
+            previous_flight_path, next_flight_path
+        );
+
+        if self.corrupted {
+            debug!("...no, {} is corrupted", previous_flight_path);
+            return false;
+        }
+
+        if self.tod_offset != next_flight.tod_offset {
+            debug!(
+                "...no, {} and {} are at different times of day",
+                previous_flight_path, next_flight_path
+            );
+        }
+
+        let dt = next_flight.start_time - self.end_time;
+        if dt > 1.0 {
+            debug!(
+                "...no, {} and {} are more than a second apart",
+                previous_flight_path, next_flight_path
+            );
+            return false;
+        }
+
+        debug!("...yes!");
+        info!("Merging {} into {}", next_flight_path, previous_flight_path);
+        let start_time = Instant::now();
+
+        // If we're adding corrupted data to uncorrupted, propagate that.
+        self.corrupted |= next_flight.corrupted;
+        self.end_time = next_flight.end_time;
+
+        // An unused ID in self that we can use for new entities in next_flight
+        let mut unique_id = std::cmp::max(
+            *self.entities.keys().max().unwrap(),
+            *self.features.keys().max().unwrap(),
+        ) + 1;
+
+        self.merge_entities(next_flight, &mut unique_id);
+        self.merge_features(next_flight, &mut unique_id);
+
+        self.general_events
+            .extend_from_slice(&next_flight.general_events);
+
+        crate::print_timing("Merge", &start_time);
+        true
+    }
+
+    fn merge_entities(self: &mut Flight, next_flight: &Flight, unique_id: &mut i32) {
+        let starting_uid = *unique_id;
+
+        // Entities that already have data from next_flight merged in.
+        let mut continued_entities = HashSet::with_capacity(next_flight.entities.len());
+
+        for (next_id, next_entity) in &next_flight.entities {
+            let mut closest_entity: Option<i32> = None;
+            let mut closest_distance = f32::INFINITY;
+
+            let next_data = next_entity.position_data.as_ref().unwrap();
+            let next_position = next_data.position_updates.first().unwrap();
+
+            for (previous_id, previous_entity) in &self.entities {
+                let previous_data = previous_entity.position_data.as_ref().unwrap();
+
+                // Entities don't (shouldn't!) change type from file to file.
+                // Skip over ones that don't match.
+                if next_data.kind != previous_data.kind {
+                    continue;
+                }
+
+                // Don't consider entities we've already
+                // matched up to one in next_flight.
+                //
+                // TODO: Profile - do this take more time than the math below would?
+                // It still seems useful so that entities right on top of each other
+                // (happens to ground units occasionally) get some 1 to 1 mapping.
+                if continued_entities.contains(previous_id) {
+                    continue;
+                }
+
+                let previous_position = previous_data.position_updates.last().unwrap();
+
+                let distance = ((next_position.x - previous_position.x).powi(2)
+                    + (next_position.y - previous_position.y).powi(2)
+                    + (next_position.z - previous_position.z).powi(2))
+                .sqrt();
+
+                if distance < closest_distance {
+                    closest_entity = Some(*previous_id);
+                    closest_distance = distance;
+                }
+                if distance == 0.0 {
+                    // We're not gonna do any better.
+                    break;
+                }
+            }
+
+            if closest_distance < 5280.0 {
+                // We found an entity of the same kind nearby (< 1 mi) in self.
+                let closest_id = closest_entity.unwrap();
+                assert!(continued_entities.insert(closest_id));
+
+                // Copy all its updates over to the previous entity.
+                self.entities
+                    .get_mut(&closest_id)
+                    .unwrap()
+                    .position_data
+                    .as_mut()
+                    .unwrap()
+                    .position_updates
+                    .extend_from_slice(&next_data.position_updates);
+            } else {
+                // We couldn't find anything close in self.
+                // Create a brand new entity there.
+                assert!(continued_entities.insert(*unique_id));
+                assert!(self
+                    .entities
+                    .insert(*unique_id, next_entity.clone())
+                    .is_none());
+
+                // Add a callsign record.
+                if let Some(callsign) = next_flight.callsigns.get(next_id) {
+                    assert!(self.callsigns.insert(*unique_id, *callsign).is_none());
+                }
+                *unique_id += 1;
+            }
+        }
+
+        let new_entities = (*unique_id - starting_uid) as usize;
+        debug!(
+            "{} new entities, {} merged",
+            new_entities,
+            next_flight.entities.len() - new_entities
+        );
+    }
+
+    fn merge_features(self: &mut Flight, next_flight: &Flight, unique_id: &mut i32) {
+        let starting_uid = *unique_id;
+
+        let mut next_to_previous_ids = HashMap::with_capacity(next_flight.features.len());
+
+        for (next_id, next_feature) in &next_flight.features {
+            let mut matching_previous = None;
+
+            for (previous_id, previous_feature) in &self.features {
+                if next_feature.kind != previous_feature.kind
+                    || next_feature.slot != previous_feature.slot
+                    || next_feature.special_flags != previous_feature.special_flags
+                    || next_feature.x != previous_feature.x
+                    || next_feature.y != previous_feature.y
+                    || next_feature.z != previous_feature.z
+                    || next_feature.pitch != previous_feature.pitch
+                    || next_feature.roll != previous_feature.roll
+                    || next_feature.yaw != previous_feature.yaw
+                {
+                    continue;
+                }
+
+                // Everything but the time and lead IDs
+                // (which can change between files) matches.
+                // It's probably the same thing.
+                matching_previous = Some(*previous_id);
+                break;
+            }
+            if let Some(previous_id) = matching_previous {
+                // If the feature already existed in self,
+                // no need to do anything to it.
+                next_to_previous_ids.insert(next_id, previous_id);
+            } else {
+                // If the feature is new to next_flight,
+                // create a new ID for it
+                next_to_previous_ids.insert(next_id, *unique_id);
+
+                // Add a callsign record.
+                if let Some(callsign) = next_flight.callsigns.get(next_id) {
+                    assert!(self.callsigns.insert(*unique_id, *callsign).is_none());
+                }
+                *unique_id += 1;
+            }
+        }
+
+        // Find features that we need to copy in and fix up their parent IDs.
+        for (next_id, next_feature) in &next_flight.features {
+            let previous_id = next_to_previous_ids[next_id];
+            if previous_id < starting_uid {
+                continue; // It's already in self.
+            }
+
+            let to_copy = FeatureData {
+                lead_uid: next_to_previous_ids[next_id],
+                ..*next_feature
+            };
+            assert!(self.features.insert(previous_id, to_copy).is_none());
+        }
+
+        // While we have next_to_previous_ids,
+        // let's copy over all the feature events, fixing up their IDs.
+        self.feature_events
+            .reserve(next_flight.feature_events.len());
+        for feature_event in &next_flight.feature_events {
+            self.feature_events.push(FeatureEvent {
+                feature_uid: next_to_previous_ids[&feature_event.feature_uid],
+                ..*feature_event
+            });
+        }
+
+        let new_features = (*unique_id - starting_uid) as usize;
+        debug!(
+            "{} new features, {} merged",
+            new_features,
+            next_flight.features.len() - new_features
+        );
     }
 }
 
@@ -467,8 +696,38 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
         REC_TYPE_CALLSIGN_LIST => {
             if !flight.callsigns.is_empty() {
                 warn!("Multiple callsign lists found, using the latest");
+                flight.callsigns.clear();
             }
-            flight.callsigns = parse_callsigns(r)?;
+
+            // Callsign data is a sparse array where indexing by ID
+            // gives you name and faction.
+            let callsign_array = parse_callsigns(r)?;
+
+            // Callsigns are always written at the end,
+            // so we can safely assume entity and feature maps are filled out.
+            for entity_key in flight.entities.keys() {
+                let index = *entity_key as usize;
+                if index >= callsign_array.len() {
+                    continue;
+                }
+                let callsign = callsign_array[index];
+                if callsign == CallsignRecord::default() {
+                    continue;
+                }
+                assert!(flight.callsigns.insert(*entity_key, callsign).is_none());
+            }
+
+            for feature_key in flight.features.keys() {
+                let index = *feature_key as usize;
+                if index >= callsign_array.len() {
+                    continue;
+                }
+                let callsign = callsign_array[index];
+                if callsign == CallsignRecord::default() {
+                    continue;
+                }
+                assert!(flight.callsigns.insert(*feature_key, callsign).is_none());
+            }
         }
         wut => {
             bail!("Unknown enity type {} (0-13 are valid)", wut);
@@ -763,7 +1022,7 @@ fn parse_callsigns<R: Read>(r: &mut R) -> Result<Vec<CallsignRecord>> {
     Ok(callsigns)
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub struct CallsignRecord {
     pub label: [u8; 16],
     pub team_color: i32,

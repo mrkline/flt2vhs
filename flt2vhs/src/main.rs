@@ -1,6 +1,8 @@
-use std::fs::{self, File};
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::{
+    fs::{self, File},
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use anyhow::*;
 use humansize::{file_size_opts as Sizes, FileSize};
@@ -36,13 +38,9 @@ struct Args {
     #[structopt(short, long)]
     force: bool,
 
-    /// The VHS file to write. Defaults to <input>.vhs
-    #[structopt(short, long, name = "VHS file")]
-    output: Option<PathBuf>,
-
     /// The FLT file to read
     #[structopt(name = "input.flt")]
-    input: PathBuf,
+    inputs: Vec<PathBuf>,
 }
 
 pub fn print_timing(msg: &str, start: &Instant) {
@@ -62,61 +60,58 @@ fn run() -> Result<()> {
     let args = Args::from_args();
     logsetup::init_logger(args.verbose, args.timestamps, args.color);
 
-    let input = args.input;
-    let output = args.output.ok_or(()).or_else(|_| default_output(&input))?;
-    info!("Converting {} to {}", input.display(), output.display());
-
     let parse_start = Instant::now();
-    let mapping = open_flt(&input)?;
-    let parsed_flight = flt::Flight::parse(&*mapping);
-    if parsed_flight.corrupted {
-        warn!("Flight file is corrupted! Doing what we can with what we have...");
-    }
-    let flt_size = mapping.len();
-    drop(mapping);
-    print_timing("FLT parse", &parse_start);
 
-    if !args.force && parsed_flight.corrupted {
-        if input == output {
-            bail!(
-                "{} looks like a VHS file! Quitting before we overwrite it",
-                input.display()
-            );
-        } else if output.exists() {
-            bail!(
-                "Refusing to overwrite {} with a corrupted recording without --force",
-                output.display()
-            );
+    let mut flights: Vec<_> = args
+        .inputs
+        .iter()
+        .map(|input| {
+            info!("Parsing {}", input.display());
+
+            let mapping = open_flt(&input)?;
+            let parsed_flight = flt::Flight::parse(&*mapping);
+            drop(mapping);
+
+            Ok(parsed_flight)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    print_timing(
+        &format!("Parsing {} FLT files", args.inputs.len()),
+        &parse_start,
+    );
+
+    let mut starting_index = 0;
+    let mut next_index = 1;
+
+    while starting_index < flights.len() {
+        // All hail the borrow checker
+        let (left, right) = flights.split_at_mut(next_index);
+        let starting = &mut left[starting_index];
+
+        if right.is_empty()
+            || !starting.merge(
+                &right[0],
+                &args.inputs[starting_index],
+                &args.inputs[next_index],
+            )
+        {
+            write_flight(&args.inputs[starting_index..next_index], starting, &args)?;
+            starting_index = next_index;
+            next_index = starting_index + 1;
+        } else {
+            next_index += 1;
         }
     }
-
-    let write_start = Instant::now();
-    let vhs = open_vhs(&output)?;
-    let vhs_size = vhs::write(&parsed_flight, vhs)?;
-    print_timing("VHS write", &write_start);
-
-    let mut size_options = Sizes::CONVENTIONAL;
-    size_options.space = false;
 
     info!(
-        "Took {:.3}s to convert {} FLT to {} VHS",
+        "All files converted in {:.3}s",
         start_time.elapsed().as_secs_f32(),
-        flt_size.file_size(&size_options).unwrap(),
-        vhs_size.file_size(&size_options).unwrap(),
     );
-    if parsed_flight.corrupted {
-        warn!("Converted corrupted FLT file, resulting VHS may be incomplete");
-        std::process::exit(2); // Use a different error code than normal failure
-    } else {
-        if args.delete {
-            debug!("Deleting {} after its conversion", input.display());
-            fs::remove_file(&input)?;
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
-fn default_output(input: &Path) -> Result<PathBuf> {
+fn output_name(input: &Path) -> Result<PathBuf> {
     // Path::with_extension just replaces the last one.
     // Replace ALL THE EXTENISONS!
     let name = input
@@ -143,4 +138,72 @@ fn open_vhs(to: &Path) -> Result<File> {
     let fh =
         File::create(to).with_context(|| format!("Couldn't open {} to write", to.display()))?;
     Ok(fh)
+}
+
+fn write_flight(inputs: &[PathBuf], flight: &flt::Flight, args: &Args) -> Result<()> {
+    let output = output_name(&inputs[0])?;
+
+    let flt_size = inputs
+        .iter()
+        .map(fs::metadata)
+        .fold(Ok(0), |acc, meta| -> Result<u64, Error> {
+            acc.and_then(|sum| Ok(sum + meta?.len()))
+        })?;
+
+    let mut size_options = Sizes::CONVENTIONAL;
+    size_options.space = false;
+
+    info!(
+        "Converting {} ({}) to {}",
+        inputs
+            .iter()
+            .map(|i| i.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(", "),
+        flt_size.file_size(&size_options).unwrap(),
+        output.display()
+    );
+
+    if flight.corrupted {
+        warn!("Flight file is corrupted! Doing what we can with what we have...");
+    }
+    if !args.force && flight.corrupted {
+        if inputs[0] == output {
+            bail!(
+                "{} looks like a VHS file! Quitting before we overwrite it",
+                inputs[0].display()
+            );
+        } else if output.exists() {
+            bail!(
+                "Refusing to overwrite {} with a corrupted recording without --force",
+                output.display()
+            );
+        }
+    }
+
+    let write_start = Instant::now();
+    let vhs = open_vhs(&output)?;
+    let vhs_size = vhs::write(&flight, vhs)?;
+    print_timing(
+        &format!(
+            "{} ({}) write",
+            output.display(),
+            vhs_size.file_size(&size_options).unwrap(),
+        ),
+        &write_start,
+    );
+
+    if flight.corrupted {
+        warn!("Converted corrupted FLT file, resulting VHS may be incomplete");
+        std::process::exit(2); // Use a different error code than normal failure
+    } else {
+        if args.delete {
+            for input in inputs {
+                debug!("Deleting {} after its conversion", input.display());
+                fs::remove_file(&input)
+                    .with_context(|| format!("Couldn't remove {}", input.display()))?;
+            }
+        }
+        Ok(())
+    }
 }

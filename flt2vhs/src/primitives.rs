@@ -1,5 +1,5 @@
 ///! Utility functions for reading and writing primitives
-use std::io::{Result, Read, Write};
+use std::io::{Read, Result, Write};
 
 /// Writes a byte to the provided writer
 #[inline(always)]
