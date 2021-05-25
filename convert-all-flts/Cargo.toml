@@ -9,7 +9,6 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0"
 chrono = "0.4"
-notify = "4.0"
 log = "0.4"
 logsetup = { path = "../logsetup" }
 structopt = "0.3.8"

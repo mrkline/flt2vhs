@@ -1,15 +1,11 @@
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
-use std::io;
-use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::*;
 
 use anyhow::*;
 use chrono::prelude::*;
 use log::*;
-use notify::{raw_watcher, RecursiveMode, Watcher};
 use structopt::StructOpt;
 
 /// Converts all FLT files in the directory to VHS,
@@ -69,118 +65,34 @@ fn run() -> Result<()> {
         })?;
     }
 
-    rename_flts(&args)?;
-
-    let (tx, rx) = channel();
-    let mut watcher = raw_watcher(tx).unwrap();
-    watcher
-        .watch(env::current_dir()?, RecursiveMode::NonRecursive)
-        .context("Couldn't start watching the current directory")?;
-
-    loop {
-        match rx.recv_timeout(std::time::Duration::from_secs(1)) {
-            // We don't actually care what the event was;
-            // rescanning is cheap.
-            Ok(_) | Err(RecvTimeoutError::Timeout) => rename_flts(&args)?,
-            Err(RecvTimeoutError::Disconnected) => return Ok(()),
-        }
-    }
+    rename_and_convert(&args)
 }
 
-fn find_first_flt() -> Result<Option<PathBuf>> {
-    for f in fs::read_dir(env::current_dir()?)? {
+fn rename_and_convert(args: &Args) -> Result<()> {
+    let mut to_rename = Vec::new();
+
+    let cwd = env::current_dir()?;
+    for f in fs::read_dir(cwd)? {
         let entry = f?;
         let path = entry.path();
         if path.extension() == Some(OsStr::new("flt")) && entry.metadata()?.is_file() {
             trace!("Found .flt file {}", path.display());
-            return Ok(Some(path));
+            to_rename.push(path);
         }
     }
-    Ok(None)
-}
 
-fn rename_flts(args: &Args) -> Result<()> {
-    while let Some(flt) = find_first_flt()? {
-        let renamed_to = rename_flt(flt)?;
-        if !args.no_convert {
-            if let Err(e) = convert_flt(args, &renamed_to) {
-                warn!("{:?}", e);
-            }
-        }
-    }
+    let renamed_flights = to_rename.iter().map(|f| rename_flt(f))
+        .collect::<Result<Vec<_>>>()?;
+
+    convert_flts(args, &renamed_flights)?;
     Ok(())
 }
 
-fn rename_flt(to_rename: PathBuf) -> Result<PathBuf> {
-    use std::os::windows::fs::OpenOptionsExt;
-
+fn rename_flt(to_rename: &Path) -> Result<PathBuf> {
     let rename_to = timestamp_name(&to_rename);
-
     debug!("Trying to rename {}...", to_rename.display());
-    match fs::rename(&to_rename, &rename_to) {
-        Ok(()) => {
-            info!("Renamed {} to {}", to_rename.display(), rename_to.display());
-            return Ok(rename_to);
-        }
-        // Windows error 32: The file is being used by another process.
-        Err(e) if e.raw_os_error() == Some(32) => {
-            info!(
-                "{} is in use (presumably by BMS). Waiting...",
-                to_rename.display()
-            );
-        }
-        Err(other_error) => {
-            return Err(Error::from(other_error).context("Renaming failed unexpectedly"))
-        }
-    }
-
-    // Try to open the .flt file in a loop - there's a brief window when BMS
-    // finishes writing it before it opens it back up to convert to VHS.
-    let mut flt_fh = loop {
-        // This seems a bit long, but it's what acmi-compiler does.
-        std::thread::sleep(std::time::Duration::from_millis(250));
-
-        let open_result = fs::OpenOptions::new()
-            .read(true)
-            .share_mode(0)
-            .open(&to_rename);
-
-        match open_result {
-            Ok(fh) => {
-                trace!("Opened {}", to_rename.display());
-                break fh;
-            }
-            // Windows error 32: The file is being used by another process.
-            Err(e) if e.raw_os_error() == Some(32) => {
-                trace!(
-                    "Couldn't open {}, still in use. Trying again shortly...",
-                    to_rename.display()
-                );
-            }
-            Err(other_error) => {
-                return Err(Error::from(other_error)
-                    .context(format!("Couldn't open {}", to_rename.display())))
-            }
-        }
-    };
-
-    // Closing the .flt file handle and doing a rename is a bit racy -
-    // it assumes that BMS has given up on trying to open it in the meantime.
-    // Instead, just do a copy.
-    let mut renamed_fh = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&rename_to)
-        .with_context(|| format!("Couldn't open {} for copying", rename_to.display()))?;
-
-    io::copy(&mut flt_fh, &mut renamed_fh)?;
-    renamed_fh.flush()?;
-
-    // Copy successful!
+    fs::rename(&to_rename, &rename_to).with_context(|| format!("Renaming {} failed", to_rename.display()))?;
     info!("Renamed {} to {}", to_rename.display(), rename_to.display());
-    drop(flt_fh);
-    fs::remove_file(to_rename)?;
-
     Ok(rename_to)
 }
 
@@ -234,10 +146,14 @@ fn windows_timestamp(ts: u64) -> Option<DateTime<Utc>> {
     }
 }
 
-fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
+fn path_list(paths: &[PathBuf]) -> String {
+    paths.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(", ")
+}
+
+fn convert_flts(args: &Args, flts: &[PathBuf]) -> Result<()> {
     debug!(
-        "Converting {} with {}",
-        flt.display(),
+        "Converting {:?} with {}",
+        path_list(flts),
         args.converter.display()
     );
 
@@ -250,7 +166,7 @@ fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
             proc.arg("--delete");
         }
     }
-    proc.arg(flt);
+    proc.args(flts);
     let exit_status = proc
         .status()
         .with_context(|| format!("Couldn't run {}", args.converter.display()))?;
@@ -260,7 +176,7 @@ fn convert_flt(args: &Args, flt: &Path) -> Result<()> {
         bail!(
             "{} failed to convert {}",
             args.converter.display(),
-            flt.display()
+            path_list(flts)
         );
     }
 }
