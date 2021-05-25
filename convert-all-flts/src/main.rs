@@ -81,7 +81,9 @@ fn rename_and_convert(args: &Args) -> Result<()> {
         }
     }
 
-    let renamed_flights = to_rename.iter().map(|f| rename_flt(f))
+    let renamed_flights = to_rename
+        .iter()
+        .map(|f| rename_flt(f))
         .collect::<Result<Vec<_>>>()?;
 
     convert_flts(args, &renamed_flights)?;
@@ -91,7 +93,8 @@ fn rename_and_convert(args: &Args) -> Result<()> {
 fn rename_flt(to_rename: &Path) -> Result<PathBuf> {
     let rename_to = timestamp_name(&to_rename);
     debug!("Trying to rename {}...", to_rename.display());
-    fs::rename(&to_rename, &rename_to).with_context(|| format!("Renaming {} failed", to_rename.display()))?;
+    fs::rename(&to_rename, &rename_to)
+        .with_context(|| format!("Renaming {} failed", to_rename.display()))?;
     info!("Renamed {} to {}", to_rename.display(), rename_to.display());
     Ok(rename_to)
 }
@@ -147,7 +150,11 @@ fn windows_timestamp(ts: u64) -> Option<DateTime<Utc>> {
 }
 
 fn path_list(paths: &[PathBuf]) -> String {
-    paths.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>().join(", ")
+    paths
+        .iter()
+        .map(|p| p.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn convert_flts(args: &Args, flts: &[PathBuf]) -> Result<()> {

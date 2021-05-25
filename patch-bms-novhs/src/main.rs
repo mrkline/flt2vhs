@@ -68,7 +68,8 @@ fn run() -> Result<()> {
         patch_call(&mut map, patch, args.restore)?;
     }
 
-    map.flush().context("Couldn't save changes to Falcon BMS.exe")?;
+    map.flush()
+        .context("Couldn't save changes to Falcon BMS.exe")?;
 
     if args.restore {
         info!("BMS restored to its original state")

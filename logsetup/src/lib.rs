@@ -52,5 +52,6 @@ pub fn init_logger(verbosity: u8, timestamps: bool, color: Color) {
         TermLogger::init(level, config.clone(), TerminalMode::Stderr, color)
             .or_else(|_| SimpleLogger::init(level, config))
             .context("Couldn't init logger")
-    }.unwrap()
+    }
+    .unwrap()
 }
