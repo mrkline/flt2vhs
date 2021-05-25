@@ -135,7 +135,7 @@ impl TimelineEntry {
         let payload = match read_u8(r)? {
             0 => TimelineEntryPayload::Pos(Position::read(r)?),
             1 => TimelineEntryPayload::Switch(Switch::read(r)?),
-            2 => TimelineEntryPayload::DOF(DOF::read(r)?),
+            2 => TimelineEntryPayload::Dof(Dof::read(r)?),
             wut => bail!("Invalid timeline entry type: {}", wut),
         };
         let next_update_offset = read_u32(r)?;
@@ -154,7 +154,7 @@ impl TimelineEntry {
 pub enum TimelineEntryPayload {
     Pos(Position),
     Switch(Switch),
-    DOF(DOF),
+    Dof(Dof),
 }
 
 #[derive(Debug, Copy, Clone, Serialize)]
@@ -215,13 +215,13 @@ impl Switch {
 }
 
 #[derive(Debug, Copy, Clone, Serialize)]
-pub struct DOF {
+pub struct Dof {
     pub dof_index: i32,
     pub dof_value: f32,
     pub previous_dof_value: f32,
 }
 
-impl DOF {
+impl Dof {
     pub fn read<R: Read>(r: &mut R) -> Result<Self> {
         let dof_index = read_i32(r)?;
         let dof_value = read_f32(r)?;

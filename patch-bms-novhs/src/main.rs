@@ -90,6 +90,7 @@ fn patch_call(map: &mut [u8], patch: &Patch, restore: bool) -> Result<()> {
         "EXE is too short - are you sure this is BMS 4.35U1?"
     );
 
+    #[allow(clippy::collapsible_else_if)]
     if restore {
         if call_to_nop == patch.original {
             debug!(
