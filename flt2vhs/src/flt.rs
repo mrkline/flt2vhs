@@ -169,15 +169,15 @@ impl Flight {
     fn merge_entities(self: &mut Flight, next_flight: &Flight, unique_id: &mut i32) {
         let starting_uid = *unique_id;
 
-        // Entities that already have data from next_flight merged in.
-        let mut continued_entities = HashSet::with_capacity(next_flight.entities.len());
+        let mut used_previous_entities: HashSet<i32> = HashSet::with_capacity(self.entities.len());
+        let mut next_to_previous_ids: HashMap<i32, i32> =
+            HashMap::with_capacity(next_flight.entities.len());
 
         for (next_id, next_entity) in &next_flight.entities {
             let mut closest_entity: Option<i32> = None;
             let mut closest_distance = f32::INFINITY;
 
             let next_data = next_entity.position_data.as_ref().unwrap();
-            let next_position = next_data.position_updates.first().unwrap();
 
             for (previous_id, previous_entity) in &self.entities {
                 let previous_data = previous_entity.position_data.as_ref().unwrap();
@@ -188,16 +188,16 @@ impl Flight {
                     continue;
                 }
 
-                // Don't consider entities we've already
-                // matched up to one in next_flight.
+                // Don't consider entities we've already matched up.
                 //
-                // TODO: Profile - do this take more time than the math below would?
-                // It still seems useful so that entities right on top of each other
+                // Along with trying to get some perf wins (are we? profile!),
+                // we want to make sure that entities right on top of each other
                 // (happens to ground units occasionally) get some 1 to 1 mapping.
-                if continued_entities.contains(previous_id) {
+                if used_previous_entities.contains(previous_id) {
                     continue;
                 }
 
+                let next_position = next_data.position_updates.first().unwrap();
                 let previous_position = previous_data.position_updates.last().unwrap();
 
                 let distance = ((next_position.x - previous_position.x).powi(2)
@@ -216,33 +216,60 @@ impl Flight {
             }
 
             if closest_distance < 5280.0 {
-                // We found an entity of the same kind nearby (< 1 mi) in self.
                 let closest_id = closest_entity.unwrap();
-                assert!(continued_entities.insert(closest_id));
 
-                // Copy all its updates over to the previous entity.
-                self.entities
-                    .get_mut(&closest_id)
-                    .unwrap()
-                    .position_data
-                    .as_mut()
-                    .unwrap()
-                    .position_updates
-                    .extend_from_slice(&next_data.position_updates);
+                // We found an entity of the same kind nearby (< 1 mi) in self.
+                assert!(used_previous_entities.insert(closest_id));
+                assert!(next_to_previous_ids.insert(*next_id, closest_id).is_none());
             } else {
                 // We couldn't find anything close in self.
                 // Create a brand new entity there.
-                assert!(continued_entities.insert(*unique_id));
-                assert!(self
-                    .entities
-                    .insert(*unique_id, next_entity.clone())
-                    .is_none());
+                assert!(next_to_previous_ids.insert(*next_id, *unique_id).is_none());
 
                 // Add a callsign record.
                 if let Some(callsign) = next_flight.callsigns.get(next_id) {
                     assert!(self.callsigns.insert(*unique_id, *callsign).is_none());
                 }
+
                 *unique_id += 1;
+            }
+        }
+
+        // Now that we know how all entities in next_flight map to self,
+        // fix up their radar targets and copy them over.
+        assert_eq!(next_to_previous_ids.len(), next_flight.entities.len());
+        for (next_id, next_entity) in &next_flight.entities {
+            let previous_id = next_to_previous_ids[next_id];
+
+            let from = next_entity.position_data.as_ref().unwrap();
+
+            let to = &mut self
+                .entities
+                .entry(previous_id)
+                .or_insert(EntityData {
+                    position_data: Some(EntityPositionData {
+                        position_updates: Vec::with_capacity(from.position_updates.len()),
+                        ..*from
+                    }),
+                    events: next_entity.events.clone(),
+                })
+                .position_data
+                .as_mut()
+                .unwrap()
+                .position_updates;
+
+            let from = &from.position_updates;
+            to.reserve(from.len());
+
+            for position in from {
+                let radar_target = *next_to_previous_ids
+                    .get(&position.radar_target)
+                    .unwrap_or(&-1);
+
+                to.push(EntityPositionUpdate {
+                    radar_target,
+                    ..*position
+                });
             }
         }
 
@@ -257,7 +284,8 @@ impl Flight {
     fn merge_features(self: &mut Flight, next_flight: &Flight, unique_id: &mut i32) {
         let starting_uid = *unique_id;
 
-        let mut next_to_previous_ids = HashMap::with_capacity(next_flight.features.len());
+        let mut next_to_previous_ids: HashMap<i32, i32> =
+            HashMap::with_capacity(next_flight.features.len());
 
         for (next_id, next_feature) in &next_flight.features {
             let mut matching_previous = None;
@@ -279,17 +307,19 @@ impl Flight {
                 // Everything but the time and lead IDs
                 // (which can change between files) matches.
                 // It's probably the same thing.
+                // (Unlike entities, we don't really care about a 1 to 1 mapping
+                // since features don't move.)
                 matching_previous = Some(*previous_id);
                 break;
             }
             if let Some(previous_id) = matching_previous {
                 // If the feature already existed in self,
                 // no need to do anything to it.
-                next_to_previous_ids.insert(next_id, previous_id);
+                next_to_previous_ids.insert(*next_id, previous_id);
             } else {
                 // If the feature is new to next_flight,
                 // create a new ID for it
-                next_to_previous_ids.insert(next_id, *unique_id);
+                next_to_previous_ids.insert(*next_id, *unique_id);
 
                 // Add a callsign record.
                 if let Some(callsign) = next_flight.callsigns.get(next_id) {
@@ -299,7 +329,9 @@ impl Flight {
             }
         }
 
-        // Find features that we need to copy in and fix up their parent IDs.
+        // Now that we know how all features in next_flight map to self,
+        // fix up their parent IDs and copy them over.
+        assert_eq!(next_to_previous_ids.len(), next_flight.features.len());
         for (next_id, next_feature) in &next_flight.features {
             let previous_id = next_to_previous_ids[next_id];
             if previous_id < starting_uid {
