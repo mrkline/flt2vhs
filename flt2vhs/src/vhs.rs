@@ -1,10 +1,10 @@
 //! Writes a flight parsed from a `.flt` file into a `.vhs` file
 
-use std::collections::HashMap;
 use std::io;
 use std::io::prelude::*;
 
 use anyhow::*;
+use fnv::FnvHashMap;
 use log::*;
 use rayon::prelude::*;
 
@@ -84,9 +84,9 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
         ) {
             (true, false) => Ordering::Less,
             (false, true) => Ordering::Greater,
-            // We want our FLT -> VHS conversion to be deterministic,
-            // so sort IDs instead of grabbing them in whatever order they come
-            // out of the hash map.
+            // Sorting IDs (instead of grabbing them in whatever order they come
+            // out of the hash map) seems to put the player first,
+            // and it's cheap compared to everything else we're doing.
             _ => left.cmp(right),
         }
     });
@@ -113,7 +113,8 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
 
     // Some of the feature fields refer to the index of other features.
     // Let's put those in hash map so we can get constant time lookup.
-    let mut feature_indexes: HashMap<i32, i32> = HashMap::with_capacity(flight.features.len());
+    let mut feature_indexes: FnvHashMap<i32, i32> =
+        FnvHashMap::with_capacity_and_hasher(flight.features.len(), Default::default());
     for (i, uid) in all_ids
         .iter()
         .filter(|id| flight.features.contains_key(id))
@@ -342,7 +343,7 @@ fn write_entities<W: Write>(
     header: &Header,
     w: &mut W,
 ) -> Result<u32> {
-    let mut kind_indexes = HashMap::new();
+    let mut kind_indexes = FnvHashMap::default();
     let mut position_index = 0;
     let mut event_index = 0;
 
@@ -397,7 +398,7 @@ fn write_entities<W: Write>(
 fn write_features<W: Write>(
     flight: &Flight,
     all_ids: &[i32],
-    feature_indexes: &HashMap<i32, i32>,
+    feature_indexes: &FnvHashMap<i32, i32>,
     feature_position_offset: u32,
     header: &Header,
     w: &mut W,
@@ -443,7 +444,8 @@ fn write_entity_positions<W: Write>(
     w: &mut CountedWrite<W>,
 ) -> Result<()> {
     // Radar targets need to be converted from UIDs to entity indexes.
-    let mut entity_indexes: HashMap<i32, i32> = HashMap::with_capacity(flight.entities.len());
+    let mut entity_indexes: FnvHashMap<i32, i32> =
+        FnvHashMap::with_capacity_and_hasher(flight.entities.len(), Default::default());
     for (i, uid) in all_ids
         .iter()
         .filter(|id| flight.entities.contains_key(id))
@@ -618,7 +620,7 @@ fn write_general_events<W: Write>(
 
 fn write_feature_events<W: Write>(
     flight: &Flight,
-    feature_indexes: &HashMap<i32, i32>,
+    feature_indexes: &FnvHashMap<i32, i32>,
     w: &mut CountedWrite<W>,
 ) -> Result<()> {
     for event in &flight.feature_events {
