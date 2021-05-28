@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::*;
 use log::*;
+use rayon::prelude::*;
 
 use crate::primitives::*;
 
@@ -173,13 +174,19 @@ impl Flight {
         let mut next_to_previous_ids: HashMap<i32, i32> =
             HashMap::with_capacity(next_flight.entities.len());
 
-        for (next_id, next_entity) in &next_flight.entities {
+        let mut old_ids = self.entities.keys().collect::<Vec<_>>();
+        old_ids.par_sort_unstable();
+
+        let mut new_ids = next_flight.entities.keys().collect::<Vec<_>>();
+        new_ids.par_sort_unstable();
+
+        for (next_id, next_entity) in new_ids.iter().map(|id| (*id, &next_flight.entities[id])) {
             let mut closest_entity: Option<i32> = None;
             let mut closest_distance = f32::INFINITY;
 
             let next_data = next_entity.position_data.as_ref().unwrap();
 
-            for (previous_id, previous_entity) in &self.entities {
+            for (previous_id, previous_entity) in old_ids.iter().map(|id| (*id, &self.entities[id])) {
                 let previous_data = previous_entity.position_data.as_ref().unwrap();
 
                 // Entities don't (shouldn't!) change type from file to file.
@@ -287,10 +294,16 @@ impl Flight {
         let mut next_to_previous_ids: HashMap<i32, i32> =
             HashMap::with_capacity(next_flight.features.len());
 
-        for (next_id, next_feature) in &next_flight.features {
+        let mut old_ids = self.features.keys().collect::<Vec<_>>();
+        old_ids.par_sort_unstable();
+
+        let mut new_ids = next_flight.features.keys().collect::<Vec<_>>();
+        new_ids.par_sort_unstable();
+
+        for (next_id, next_feature) in new_ids.iter().map(|id| (*id, &next_flight.features[id])) {
             let mut matching_previous = None;
 
-            for (previous_id, previous_feature) in &self.features {
+            for (previous_id, previous_feature) in old_ids.iter().map(|id| (*id, &self.features[id])) {
                 if next_feature.kind != previous_feature.kind
                     || next_feature.slot != previous_feature.slot
                     || next_feature.special_flags != previous_feature.special_flags
