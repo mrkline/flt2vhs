@@ -2,7 +2,7 @@
 //! Parses info we need from a `.flt` file
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     io,
     io::prelude::*,
     path::Path,
@@ -35,7 +35,7 @@ pub struct Flight {
     /// Map entity & feature UIDs to callsigns (16 byte blocks for strings) and faction colors.
     ///
     /// Use an ordered map to quickly inflate it back to an array on VHS write.
-    pub callsigns: BTreeMap<i32, CallsignRecord>,
+    pub callsigns: HashMap<i32, CallsignRecord>,
 
     /// A map of unique IDs for entities (all moving objects in game)
     /// to their position updates and events.
