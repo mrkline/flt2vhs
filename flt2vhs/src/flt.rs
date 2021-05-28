@@ -12,7 +12,6 @@ use std::{
 use anyhow::*;
 use log::*;
 
-use crate::id_set::IdSet;
 use crate::primitives::*;
 
 /// Information parsed from a .flt file, needed to make a .vhs file
@@ -151,21 +150,14 @@ impl Flight {
         self.corrupted |= next_flight.corrupted;
         self.end_time = next_flight.end_time;
 
-        // Figure out which IDs are used in self, so we can hand out unused ones
-        // for new entities and features from next_flight.
-        // Originally we just started at <max ID + 1>,
-        // but we want the IDs to be as dense as possible,
-        // as this minimizes the size of the callsign array that needs to get
-        // written out at the end of the VHS.
-        let mut previously_used_ids = IdSet::from_ids(
-            self.entities
-                .keys()
-                .copied()
-                .chain(self.features.keys().copied()),
-        );
+        // An unused ID in self that we can use for new entities in next_flight
+        let mut unique_id = std::cmp::max(
+            *self.entities.keys().max().unwrap(),
+            *self.features.keys().max().unwrap(),
+        ) + 1;
 
-        self.merge_entities(next_flight, &mut previously_used_ids);
-        self.merge_features(next_flight, &mut previously_used_ids);
+        self.merge_entities(next_flight, &mut unique_id);
+        self.merge_features(next_flight, &mut unique_id);
 
         self.general_events
             .extend_from_slice(&next_flight.general_events);
@@ -174,8 +166,8 @@ impl Flight {
         true
     }
 
-    fn merge_entities(self: &mut Flight, next_flight: &Flight, previously_used_ids: &mut IdSet) {
-        let mut new_entities = 0usize;
+    fn merge_entities(self: &mut Flight, next_flight: &Flight, unique_id: &mut i32) {
+        let starting_uid = *unique_id;
 
         let mut used_previous_entities: HashSet<i32> = HashSet::with_capacity(self.entities.len());
         let mut next_to_previous_ids: HashMap<i32, i32> =
@@ -232,16 +224,14 @@ impl Flight {
             } else {
                 // We couldn't find anything close in self.
                 // Create a brand new entity there.
-                let unique_id = previously_used_ids.next_unused();
-
-                assert!(next_to_previous_ids.insert(*next_id, unique_id).is_none());
+                assert!(next_to_previous_ids.insert(*next_id, *unique_id).is_none());
 
                 // Add a callsign record.
                 if let Some(callsign) = next_flight.callsigns.get(next_id) {
-                    assert!(self.callsigns.insert(unique_id, *callsign).is_none());
+                    assert!(self.callsigns.insert(*unique_id, *callsign).is_none());
                 }
 
-                new_entities += 1;
+                *unique_id += 1;
             }
         }
 
@@ -283,6 +273,7 @@ impl Flight {
             }
         }
 
+        let new_entities = (*unique_id - starting_uid) as usize;
         debug!(
             "{} new entities, {} merged",
             new_entities,
@@ -290,8 +281,8 @@ impl Flight {
         );
     }
 
-    fn merge_features(self: &mut Flight, next_flight: &Flight, previously_used_ids: &mut IdSet) {
-        let mut new_features = 0usize;
+    fn merge_features(self: &mut Flight, next_flight: &Flight, unique_id: &mut i32) {
+        let starting_uid = *unique_id;
 
         let mut next_to_previous_ids: HashMap<i32, i32> =
             HashMap::with_capacity(next_flight.features.len());
@@ -328,15 +319,13 @@ impl Flight {
             } else {
                 // If the feature is new to next_flight,
                 // create a new ID for it
-                let unique_id = previously_used_ids.next_unused();
-
-                next_to_previous_ids.insert(*next_id, unique_id);
+                next_to_previous_ids.insert(*next_id, *unique_id);
 
                 // Add a callsign record.
                 if let Some(callsign) = next_flight.callsigns.get(next_id) {
-                    assert!(self.callsigns.insert(unique_id, *callsign).is_none());
+                    assert!(self.callsigns.insert(*unique_id, *callsign).is_none());
                 }
-                new_features += 1;
+                *unique_id += 1;
             }
         }
 
@@ -345,7 +334,7 @@ impl Flight {
         assert_eq!(next_to_previous_ids.len(), next_flight.features.len());
         for (next_id, next_feature) in &next_flight.features {
             let previous_id = next_to_previous_ids[next_id];
-            if previously_used_ids.contains(previous_id) {
+            if previous_id < starting_uid {
                 continue; // It's already in self.
             }
 
@@ -367,6 +356,7 @@ impl Flight {
             });
         }
 
+        let new_features = (*unique_id - starting_uid) as usize;
         debug!(
             "{} new features, {} merged",
             new_features,

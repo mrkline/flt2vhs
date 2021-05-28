@@ -10,7 +10,6 @@ use log::*;
 use structopt::StructOpt;
 
 mod flt;
-mod id_set;
 mod primitives;
 mod vhs;
 
