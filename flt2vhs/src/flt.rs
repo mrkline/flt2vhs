@@ -4,8 +4,8 @@
 use std::{io, io::prelude::*, path::Path, time::Instant};
 
 use anyhow::*;
-use fnv::{FnvHashMap, FnvHashSet};
 use log::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::primitives::*;
 
@@ -30,15 +30,15 @@ pub struct Flight {
     /// Map entity & feature UIDs to callsigns (16 byte blocks for strings) and faction colors.
     ///
     /// Use an ordered map to quickly inflate it back to an array on VHS write.
-    pub callsigns: FnvHashMap<i32, CallsignRecord>,
+    pub callsigns: FxHashMap<i32, CallsignRecord>,
 
     /// A map of unique IDs for entities (all moving objects in game)
     /// to their position updates and events.
-    pub entities: FnvHashMap<i32, EntityData>,
+    pub entities: FxHashMap<i32, EntityData>,
 
     /// A map of unique IDs for all features (static objects)
     /// and their positions.
-    pub features: FnvHashMap<i32, FeatureData>,
+    pub features: FxHashMap<i32, FeatureData>,
 
     /// "General" events not associated with any particular entities
     pub general_events: Vec<GeneralEvent>,
@@ -164,10 +164,10 @@ impl Flight {
     fn merge_entities(self: &mut Flight, next_flight: &Flight, unique_id: &mut i32) {
         let starting_uid = *unique_id;
 
-        let mut used_previous_entities: FnvHashSet<i32> =
-            FnvHashSet::with_capacity_and_hasher(self.entities.len(), Default::default());
-        let mut next_to_previous_ids: FnvHashMap<i32, i32> =
-            FnvHashMap::with_capacity_and_hasher(next_flight.entities.len(), Default::default());
+        let mut used_previous_entities: FxHashSet<i32> =
+            FxHashSet::with_capacity_and_hasher(self.entities.len(), Default::default());
+        let mut next_to_previous_ids: FxHashMap<i32, i32> =
+            FxHashMap::with_capacity_and_hasher(next_flight.entities.len(), Default::default());
 
         for (next_id, next_entity) in &next_flight.entities {
             let mut closest_entity: Option<i32> = None;
@@ -280,8 +280,8 @@ impl Flight {
     fn merge_features(self: &mut Flight, next_flight: &Flight, unique_id: &mut i32) {
         let starting_uid = *unique_id;
 
-        let mut next_to_previous_ids: FnvHashMap<i32, i32> =
-            FnvHashMap::with_capacity_and_hasher(next_flight.features.len(), Default::default());
+        let mut next_to_previous_ids: FxHashMap<i32, i32> =
+            FxHashMap::with_capacity_and_hasher(next_flight.features.len(), Default::default());
 
         for (next_id, next_feature) in &next_flight.features {
             let mut matching_previous = None;

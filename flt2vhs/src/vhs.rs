@@ -4,9 +4,9 @@ use std::io;
 use std::io::prelude::*;
 
 use anyhow::*;
-use fnv::FnvHashMap;
 use log::*;
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 
 use crate::flt::{self, Flight};
 use crate::primitives::*;
@@ -180,8 +180,8 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
 
     // Some of the feature fields refer to the index of other features.
     // Let's put those in hash map so we can get constant time lookup.
-    let mut feature_indexes: FnvHashMap<i32, i32> =
-        FnvHashMap::with_capacity_and_hasher(flight.features.len(), Default::default());
+    let mut feature_indexes: FxHashMap<i32, i32> =
+        FxHashMap::with_capacity_and_hasher(flight.features.len(), Default::default());
     for (i, id) in mapping.features.iter().map(|m| m.original).enumerate() {
         feature_indexes.insert(id, i as i32);
     }
@@ -406,7 +406,7 @@ fn write_entities<W: Write>(
     header: &Header,
     w: &mut W,
 ) -> Result<u32> {
-    let mut kind_indexes = FnvHashMap::default();
+    let mut kind_indexes = FxHashMap::default();
     let mut position_index = 0;
     let mut event_index = 0;
 
@@ -459,7 +459,7 @@ fn write_entities<W: Write>(
 fn write_features<W: Write>(
     flight: &Flight,
     feature_mapping: &[IdRemap],
-    feature_indexes: &FnvHashMap<i32, i32>,
+    feature_indexes: &FxHashMap<i32, i32>,
     feature_position_offset: u32,
     header: &Header,
     w: &mut W,
@@ -503,8 +503,8 @@ fn write_entity_positions<W: Write>(
     w: &mut CountedWrite<W>,
 ) -> Result<()> {
     // Radar targets need to be converted from UIDs to entity indexes.
-    let mut entity_indexes: FnvHashMap<i32, i32> =
-        FnvHashMap::with_capacity_and_hasher(flight.entities.len(), Default::default());
+    let mut entity_indexes: FxHashMap<i32, i32> =
+        FxHashMap::with_capacity_and_hasher(flight.entities.len(), Default::default());
     for (i, id) in entity_mapping.iter().map(|m| m.original).enumerate() {
         entity_indexes.insert(id, i as i32);
     }
@@ -688,7 +688,7 @@ fn write_general_events<W: Write>(
 
 fn write_feature_events<W: Write>(
     flight: &Flight,
-    feature_indexes: &FnvHashMap<i32, i32>,
+    feature_indexes: &FxHashMap<i32, i32>,
     w: &mut CountedWrite<W>,
 ) -> Result<()> {
     for event in &flight.feature_events {
