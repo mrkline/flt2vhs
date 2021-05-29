@@ -58,56 +58,109 @@ enum IdType {
     Feature,
 }
 
+// Maps an ID from its original in-FLT value to the one we'll write to disk.
+#[derive(Debug, Copy, Clone)]
+struct IdRemap {
+    original: i32,
+    new: i32,
+}
+
+/// Welcome to whose VHS is it anyways, where the IDs are made up
+/// and the order DOES matter.
+///
+/// IDs are used to index into the callsign table (containing name and team info)
+/// at the end of the file, and the ones that come from BMS are _very_ sparse.
+/// As fun as it is to write a bunch of zeroes in back, let's cook up our own
+/// IDs instead.
+#[derive(Debug, Clone)]
+struct IdMapping {
+    entities: Vec<IdRemap>,
+    features: Vec<IdRemap>,
+    callsign_ids: Vec<i32>,
+}
+
+impl IdMapping {
+    fn new(flight: &flt::Flight) -> Self {
+        // Make a list of every ID...
+        let mut all_ids = flight
+            .entities
+            .keys()
+            .map(|eid| (*eid, IdType::Entity))
+            .chain(flight.features.keys().map(|fid| (*fid, IdType::Feature)))
+            .collect::<Vec<(i32, IdType)>>();
+
+        // Sort it so that IDs _with_ callsign info come first...
+        // Unstable sorts are fine - we have bigger problems if IDs aren't unique.
+        all_ids.par_sort_unstable_by(|(left, left_kind), (right, right_kind)| {
+            use std::cmp::Ordering;
+            match (
+                flight.callsigns.contains_key(left),
+                flight.callsigns.contains_key(right),
+            ) {
+                (true, false) => Ordering::Less,
+                (false, true) => Ordering::Greater,
+                // Sorting IDs (instead of grabbing them in whatever order they come
+                // out of the hash map) seems to put the player first,
+                // and it's cheap compared to everything else we're doing.
+                _ => {
+                    // Since we're sorting anyways,
+                    // partition entities and features to be nicer to the branch
+                    // predictor as we filter through this below.
+                    match left_kind.cmp(right_kind) {
+                        Ordering::Equal => left.cmp(right),
+                        different => different,
+                    }
+                }
+            }
+        });
+
+        // Tada! If we replace each ID with its index in `all_ids`,
+        // ones with callsign info are [0..flight.callsigns.len()].
+        // The callsign list is now as compact as possible.
+        let callsign_bound = all_ids.partition_point(|(id, _)| flight.callsigns.contains_key(id));
+        let callsign_ids = all_ids
+            .iter()
+            .map(|(id, _)| *id)
+            .take(callsign_bound)
+            .collect();
+
+        let entities = all_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (id, kind))| {
+                (*kind == IdType::Entity).then(|| IdRemap {
+                    original: *id,
+                    new: i as i32,
+                })
+            })
+            .collect();
+
+        let features = all_ids
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (id, kind))| {
+                (*kind == IdType::Feature).then(|| IdRemap {
+                    original: *id,
+                    new: i as i32,
+                })
+            })
+            .collect();
+
+        Self {
+            entities,
+            features,
+            callsign_ids,
+        }
+    }
+}
+
 /// Writes out a VHS flight.
 ///
 /// Will allocate a BufWriter based on expected file size;
 /// pass "raw" writer in.
 /// Returns the number of bytes written on success.
 pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
-    // Welcome to whose VHS is it anyways, where the IDs are made up
-    // and the order DOES matter.
-    //
-    // IDs are used to index into the callsign table (containing name and team info)
-    // at the end of the file, and the ones that come from BMS are _very_ sparse.
-    // As fun as it is to write a bunch of zeroes in back, let's cook up our own
-    // IDs instead.
-
-    // Make a list of every ID...
-    let mut all_ids = flight
-        .entities
-        .keys()
-        .map(|eid| (*eid, IdType::Entity))
-        .chain(flight.features.keys().map(|fid| (*fid, IdType::Feature)))
-        .collect::<Vec<(i32, IdType)>>();
-
-    // Sort it so that IDs _with_ callsign info come first...
-    // Unstable sorts are fine - we have bigger problems if IDs aren't unique.
-    all_ids.par_sort_unstable_by(|(left, left_kind), (right, right_kind)| {
-        use std::cmp::Ordering;
-        match (
-            flight.callsigns.contains_key(left),
-            flight.callsigns.contains_key(right),
-        ) {
-            (true, false) => Ordering::Less,
-            (false, true) => Ordering::Greater,
-            // Sorting IDs (instead of grabbing them in whatever order they come
-            // out of the hash map) seems to put the player first,
-            // and it's cheap compared to everything else we're doing.
-            _ => {
-                // Since we're sorting anyways,
-                // partition entities and features to be nicer to the branch
-                // predictor as we filter through this a bunch of times.
-                match left_kind.cmp(right_kind) {
-                    Ordering::Equal => left.cmp(right),
-                    different => different,
-                }
-            }
-        }
-    });
-
-    // Tada! If we replace each ID with its index in `all_ids`,
-    // ones with callsign info are [0..flight.callsigns.len()].
-    // The callsign list is now as compact as possible.
+    let mapping = IdMapping::new(flight);
 
     // Build the header, which will give us an idea of how big the file will be.
     let header = Header::new(flight);
@@ -122,24 +175,20 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
     header.write(flight, w)?;
     assert_eq!(w.get_posit(), ENTITY_OFFSET);
 
-    let feature_position_offset = write_entities(flight, &all_ids, &header, w)?;
+    let feature_position_offset = write_entities(flight, &mapping.entities, &header, w)?;
     assert_eq!(w.get_posit(), header.feature_offset);
 
     // Some of the feature fields refer to the index of other features.
     // Let's put those in hash map so we can get constant time lookup.
     let mut feature_indexes: FnvHashMap<i32, i32> =
         FnvHashMap::with_capacity_and_hasher(flight.features.len(), Default::default());
-    for (i, uid) in all_ids
-        .iter()
-        .filter_map(|(id, kind)| (*kind == IdType::Feature).then(|| id))
-        .enumerate()
-    {
-        feature_indexes.insert(*uid, i as i32);
+    for (i, id) in mapping.features.iter().map(|m| m.original).enumerate() {
+        feature_indexes.insert(id, i as i32);
     }
 
     write_features(
         flight,
-        &all_ids,
+        &mapping.features,
         &feature_indexes,
         feature_position_offset,
         &header,
@@ -147,11 +196,11 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
     )?;
 
     assert_eq!(w.get_posit(), header.position_offset);
-    write_entity_positions(flight, &all_ids, w)?;
-    write_feature_positions(flight, &all_ids, w)?;
+    write_entity_positions(flight, &mapping.entities, w)?;
+    write_feature_positions(flight, &mapping.features, w)?;
 
     assert_eq!(w.get_posit(), header.entity_event_offset);
-    write_entity_events(flight, &all_ids, w)?;
+    write_entity_events(flight, &mapping.entities, w)?;
 
     assert_eq!(w.get_posit(), header.general_event_offset);
     write_general_events(flight, &header, w)?;
@@ -160,7 +209,7 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
     write_feature_events(flight, &feature_indexes, w)?;
 
     assert_eq!(w.get_posit(), header.text_event_offset);
-    write_callsigns(flight, &all_ids, w)?;
+    write_callsigns(flight, &mapping.callsign_ids, w)?;
 
     assert_eq!(w.get_posit(), header.file_length);
 
@@ -353,7 +402,7 @@ impl Header {
 ///   a second doubly-linked list (this one of events).
 fn write_entities<W: Write>(
     flight: &Flight,
-    all_ids: &[(i32, IdType)],
+    entity_mapping: &[IdRemap],
     header: &Header,
     w: &mut W,
 ) -> Result<u32> {
@@ -361,14 +410,12 @@ fn write_entities<W: Write>(
     let mut position_index = 0;
     let mut event_index = 0;
 
-    for (i, entity) in all_ids
+    for (id, entity) in entity_mapping
         .iter()
-        .enumerate()
-        .filter_map(|(i, (id, kind))| (*kind == IdType::Entity).then(|| (i, &flight.entities[id])))
+        .map(|remap| (remap.new, &flight.entities[&remap.original]))
     {
         let data = entity.position_data.as_ref().unwrap();
-        // Use the ID's index in all_ids as the ID we write to disk - see write().
-        write_i32(i as i32, w)?;
+        write_i32(id, w)?;
         write_i32(data.kind, w)?;
 
         // For some reason (at least per the acmi-compiler code), for each entity
@@ -411,20 +458,18 @@ fn write_entities<W: Write>(
 /// since features share the same format in the VHS file.
 fn write_features<W: Write>(
     flight: &Flight,
-    all_ids: &[(i32, IdType)],
+    feature_mapping: &[IdRemap],
     feature_indexes: &FnvHashMap<i32, i32>,
     feature_position_offset: u32,
     header: &Header,
     w: &mut W,
 ) -> Result<()> {
-    for (position_index, (i, feature)) in all_ids
+    for (position_index, (id, feature)) in feature_mapping
         .iter()
-        .enumerate()
-        .filter_map(|(i, (id, kind))| (*kind == IdType::Feature).then(|| (i, &flight.features[id])))
+        .map(|remap| (remap.new, &flight.features[&remap.original]))
         .enumerate()
     {
-        // Use the ID's index in all_ids as the ID we write to disk - see write().
-        write_i32(i as i32, w)?;
+        write_i32(id, w)?;
         write_i32(feature.kind, w)?;
 
         // Features don't play the same "type index" game entities do.
@@ -454,23 +499,19 @@ fn write_features<W: Write>(
 
 fn write_entity_positions<W: Write>(
     flight: &Flight,
-    all_ids: &[(i32, IdType)],
+    entity_mapping: &[IdRemap],
     w: &mut CountedWrite<W>,
 ) -> Result<()> {
     // Radar targets need to be converted from UIDs to entity indexes.
     let mut entity_indexes: FnvHashMap<i32, i32> =
         FnvHashMap::with_capacity_and_hasher(flight.entities.len(), Default::default());
-    for (i, uid) in all_ids
-        .iter()
-        .filter_map(|(id, kind)| (*kind == IdType::Entity).then(|| id))
-        .enumerate()
-    {
-        entity_indexes.insert(*uid, i as i32);
+    for (i, id) in entity_mapping.iter().map(|m| m.original).enumerate() {
+        entity_indexes.insert(id, i as i32);
     }
 
-    for entity in all_ids
+    for entity in entity_mapping
         .iter()
-        .filter_map(|(id, kind)| (*kind == IdType::Entity).then(|| &flight.entities[id]))
+        .map(|remap| &flight.entities[&remap.original])
     {
         let data = entity.position_data.as_ref().unwrap();
 
@@ -514,12 +555,12 @@ fn write_entity_positions<W: Write>(
 
 fn write_feature_positions<W: Write>(
     flight: &Flight,
-    all_ids: &[(i32, IdType)],
+    feature_mapping: &[IdRemap],
     w: &mut W,
 ) -> Result<()> {
-    for feature in all_ids
+    for feature in feature_mapping
         .iter()
-        .filter_map(|(id, kind)| (*kind == IdType::Feature).then(|| &flight.features[id]))
+        .map(|remap| &flight.features[&remap.original])
     {
         write_f32(feature.time, w)?;
         // Updates are unions of position updates,
@@ -543,12 +584,12 @@ fn write_feature_positions<W: Write>(
 
 fn write_entity_events<W: Write>(
     flight: &Flight,
-    all_ids: &[(i32, IdType)],
+    entity_mapping: &[IdRemap],
     w: &mut CountedWrite<W>,
 ) -> Result<()> {
-    for entity in all_ids
+    for entity in entity_mapping
         .iter()
-        .filter_map(|(id, kind)| (*kind == IdType::Entity).then(|| &flight.entities[id]))
+        .map(|remap| &flight.entities[&remap.original])
     {
         let mut events = entity.events.iter().peekable();
 
@@ -663,10 +704,8 @@ fn write_feature_events<W: Write>(
     Ok(())
 }
 
-fn write_callsigns<W: Write>(flight: &Flight, all_ids: &[(i32, IdType)], w: &mut W) -> Result<()> {
-    let callsign_bound = all_ids.partition_point(|(id, _)| flight.callsigns.contains_key(id));
-    let id_map = &all_ids[..callsign_bound];
-    assert_eq!(id_map.len(), flight.callsigns.len());
+fn write_callsigns<W: Write>(flight: &Flight, callsign_ids: &[i32], w: &mut W) -> Result<()> {
+    assert_eq!(callsign_ids.len(), flight.callsigns.len());
 
     if flight.callsigns.is_empty() {
         warn!("No callsigns to save!");
@@ -674,8 +713,8 @@ fn write_callsigns<W: Write>(flight: &Flight, all_ids: &[(i32, IdType)], w: &mut
         return Ok(());
     }
 
-    write_u32(id_map.len() as u32, w)?;
-    for callsign in id_map.iter().map(|(id, _)| flight.callsigns[id]) {
+    write_u32(callsign_ids.len() as u32, w)?;
+    for callsign in callsign_ids.iter().map(|id| &flight.callsigns[id]) {
         w.write_all(&callsign.label)?;
         write_i32(callsign.team_color, w)?;
     }
