@@ -101,19 +101,21 @@ fn rename_flt(to_rename: &Path) -> Result<PathBuf> {
 
 const MOVED_SUFFIX: &str = ".moved";
 
-// _TOCTOU: The Function_, but let's assume nothing's making a bunch of FLT files
-// in the exact same second.
 fn timestamp_name(to_rename: &Path) -> PathBuf {
     use std::os::windows::fs::MetadataExt;
 
     let now = Local::now();
 
+    // Try to avoid stomping other files by using to_rename as part of the output.
+    // Avoids cases (like copying several at once) where several were created
+    // in the same second and get moved on top of each other.
     match fs::metadata(to_rename).map(|meta| windows_timestamp(meta.creation_time())) {
         Ok(Some(ct)) => {
             let local = ct.with_timezone(now.offset());
             PathBuf::from(format!(
-                "{}.flt{}",
+                "{}_{}.flt{}",
                 local.format("%Y-%m-%d_%H-%M-%S"),
+                to_rename.file_stem().unwrap().to_string_lossy(),
                 MOVED_SUFFIX
             ))
         }
@@ -123,8 +125,9 @@ fn timestamp_name(to_rename: &Path) -> PathBuf {
                 to_rename.display()
             );
             PathBuf::from(format!(
-                "{}.flt{}",
-                now.format("%Y-%m-%d_%H-%M-%S"),
+                "{}_{}.flt{}",
+                now.format("%Y-%m-%d_%H-%M-%S_{}"),
+                to_rename.file_stem().unwrap().to_string_lossy(),
                 MOVED_SUFFIX
             ))
         }
