@@ -28,8 +28,11 @@ struct CountedWrite<W> {
 }
 
 impl<W: Write> CountedWrite<W> {
-    fn new(inner: W) -> Self {
-        Self { inner, posit: 0 }
+    fn new(inner: W, initial_posit: u32) -> Self {
+        Self {
+            inner,
+            posit: initial_posit,
+        }
     }
 
     fn get_posit(&self) -> u32 {
@@ -170,14 +173,23 @@ pub fn write(flight: &Flight, fh: std::fs::File) -> Result<u32> {
         .context("Couldn't grow output file")?;
     let mut mapped = unsafe { memmap::MmapMut::map_mut(&fh) }
         .with_context(|| format!("Couldn't memory map output file"))?;
-    let mut counted = CountedWrite::new(mapped.as_mut());
-    let w = &mut counted;
 
-    header.write(flight, w)?;
-    assert_eq!(w.get_posit(), ENTITY_OFFSET);
-
-    let feature_position_offset = write_entities(flight, &id_map.entities, &header, w)?;
-    assert_eq!(w.get_posit(), header.feature_offset);
+    // We know in advance how large each section of the file will be - we did
+    // that math to build the header. Slice the file mapping into mutable slices
+    // for each section, which we can write out in parallel below.
+    let (mut header_slice, rest) = mapped.split_at_mut(ENTITY_OFFSET as usize);
+    let (mut entity_slice, rest) =
+        rest.split_at_mut((header.feature_offset - ENTITY_OFFSET) as usize);
+    let (mut feature_slice, rest) =
+        rest.split_at_mut((header.position_offset - header.feature_offset) as usize);
+    let (position_slice, rest) =
+        rest.split_at_mut((header.entity_event_offset - header.position_offset) as usize);
+    let (entity_events_slice, rest) =
+        rest.split_at_mut((header.general_event_offset - header.entity_event_offset) as usize);
+    let (mut general_events_slice, rest) =
+        rest.split_at_mut((header.feature_event_offset - header.general_event_offset) as usize);
+    let (mut feature_events_slice, mut callsigns_slice) =
+        rest.split_at_mut((header.text_event_offset - header.feature_event_offset) as usize);
 
     // Some of the feature fields refer to the index of other features.
     // Let's put those in hash map so we can get constant time lookup.
@@ -187,34 +199,69 @@ pub fn write(flight: &Flight, fh: std::fs::File) -> Result<u32> {
         feature_indexes.insert(id, i as i32);
     }
 
-    write_features(
-        flight,
-        &id_map.features,
-        &feature_indexes,
-        feature_position_offset,
-        &header,
-        w,
-    )?;
+    // Parallelize ALL the writes!
+    // We'll unwrap the results of any write failures because:
+    //
+    // 1. Rayon's scope doesn't have good tools to propagate errors back.
+    //
+    // 2. We've allocated the whole file already and mapped it to memory.
+    //    Something truly bizarre is happening if a write fails.
+    rayon::scope(|s| {
+        s.spawn(|_| {
+            header
+                .write(flight, &mut header_slice)
+                .expect("Header write failed")
+        });
 
-    assert_eq!(w.get_posit(), header.position_offset);
-    write_entity_positions(flight, &id_map.entities, w)?;
-    write_feature_positions(flight, &id_map.features, w)?;
+        s.spawn(|_| {
+            let feature_position_offset =
+                write_entities(flight, &id_map.entities, &header, &mut entity_slice)
+                    .expect("Entity write failed");
 
-    assert_eq!(w.get_posit(), header.entity_event_offset);
-    write_entity_events(flight, &id_map.entities, w)?;
+            write_features(
+                flight,
+                &id_map.features,
+                &feature_indexes,
+                feature_position_offset,
+                &header,
+                &mut feature_slice,
+            )
+            .expect("Feature write failed");
+        });
 
-    assert_eq!(w.get_posit(), header.general_event_offset);
-    write_general_events(flight, &header, w)?;
+        s.spawn(|_| {
+            let mut position_write = CountedWrite::new(position_slice, header.position_offset);
+            write_entity_positions(flight, &id_map.entities, &mut position_write)
+                .expect("Entity positions write failed");
+            write_feature_positions(flight, &id_map.features, &mut position_write)
+                .expect("Feature position write failed");
+            assert_eq!(position_write.get_posit(), header.entity_event_offset);
+        });
 
-    assert_eq!(w.get_posit(), header.feature_event_offset);
-    write_feature_events(flight, &feature_indexes, w)?;
+        s.spawn(|_| {
+            let mut entity_events_write =
+                CountedWrite::new(entity_events_slice, header.entity_event_offset);
+            write_entity_events(flight, &id_map.entities, &mut entity_events_write)
+                .expect("Entity events write failed");
+            assert_eq!(entity_events_write.get_posit(), header.general_event_offset);
+        });
 
-    assert_eq!(w.get_posit(), header.text_event_offset);
-    write_callsigns(flight, &id_map.callsign_ids, w)?;
+        s.spawn(|_| {
+            write_general_events(flight, &mut general_events_slice)
+                .expect("General events write failed")
+        });
 
-    assert_eq!(w.get_posit(), header.file_length);
+        s.spawn(|_| {
+            write_feature_events(flight, &feature_indexes, &mut feature_events_slice)
+                .expect("Feature events write failed")
+        });
 
-    w.flush()?;
+        s.spawn(|_| {
+            write_callsigns(flight, &id_map.callsign_ids, &mut callsigns_slice)
+                .expect("Callsigns write failed")
+        });
+    });
+
     mapped.flush()?;
 
     Ok(header.file_length)
@@ -645,11 +692,7 @@ struct GeneralEventTrailer {
     index: u32,
 }
 
-fn write_general_events<W: Write>(
-    flight: &Flight,
-    header: &Header,
-    w: &mut CountedWrite<W>,
-) -> Result<()> {
+fn write_general_events<W: Write>(flight: &Flight, w: &mut W) -> Result<()> {
     let mut trailers = Vec::with_capacity(flight.general_events.len());
 
     for (i, event) in flight.general_events.iter().enumerate() {
@@ -679,7 +722,6 @@ fn write_general_events<W: Write>(
     }
 
     // A list of "trailers" follows the event list, sorted chronologically.
-    assert_eq!(w.get_posit(), header.general_event_trailer_offset);
     trailers.par_sort_by(|a, b| a.stop.partial_cmp(&b.stop).expect("Nooo, not NaNs!"));
     for trailer in trailers {
         write_f32(trailer.stop, w)?;
@@ -692,7 +734,7 @@ fn write_general_events<W: Write>(
 fn write_feature_events<W: Write>(
     flight: &Flight,
     feature_indexes: &FxHashMap<i32, i32>,
-    w: &mut CountedWrite<W>,
+    w: &mut W,
 ) -> Result<()> {
     for event in &flight.feature_events {
         let index = *feature_indexes
