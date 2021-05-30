@@ -159,36 +159,37 @@ impl IdMapping {
 /// Will allocate a BufWriter based on expected file size;
 /// pass "raw" writer in.
 /// Returns the number of bytes written on success.
-pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
-    let mapping = IdMapping::new(flight);
+pub fn write(flight: &Flight, fh: std::fs::File) -> Result<u32> {
+    let id_map = IdMapping::new(flight);
 
     // Build the header, which will give us an idea of how big the file will be.
     let header = Header::new(flight);
 
-    // Buffer writes up to 100 MB or the file size, whichever is smallest.
-    // (100 MB being "a round number that's not too much RAM."; play with this.)
-    let buf_size = std::cmp::min(100 * 1024 * 1024, header.file_length);
-    let buffered = io::BufWriter::with_capacity(buf_size as usize, w);
-    let mut counted = CountedWrite::new(buffered);
+    // Set the file length and map it for writing.
+    fh.set_len(header.file_length as u64)
+        .context("Couldn't grow output file")?;
+    let mut mapped = unsafe { memmap::MmapMut::map_mut(&fh) }
+        .with_context(|| format!("Couldn't memory map output file"))?;
+    let mut counted = CountedWrite::new(mapped.as_mut());
     let w = &mut counted;
 
     header.write(flight, w)?;
     assert_eq!(w.get_posit(), ENTITY_OFFSET);
 
-    let feature_position_offset = write_entities(flight, &mapping.entities, &header, w)?;
+    let feature_position_offset = write_entities(flight, &id_map.entities, &header, w)?;
     assert_eq!(w.get_posit(), header.feature_offset);
 
     // Some of the feature fields refer to the index of other features.
     // Let's put those in hash map so we can get constant time lookup.
     let mut feature_indexes: FxHashMap<i32, i32> =
         FxHashMap::with_capacity_and_hasher(flight.features.len(), Default::default());
-    for (i, id) in mapping.features.iter().map(|m| m.original).enumerate() {
+    for (i, id) in id_map.features.iter().map(|m| m.original).enumerate() {
         feature_indexes.insert(id, i as i32);
     }
 
     write_features(
         flight,
-        &mapping.features,
+        &id_map.features,
         &feature_indexes,
         feature_position_offset,
         &header,
@@ -196,11 +197,11 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
     )?;
 
     assert_eq!(w.get_posit(), header.position_offset);
-    write_entity_positions(flight, &mapping.entities, w)?;
-    write_feature_positions(flight, &mapping.features, w)?;
+    write_entity_positions(flight, &id_map.entities, w)?;
+    write_feature_positions(flight, &id_map.features, w)?;
 
     assert_eq!(w.get_posit(), header.entity_event_offset);
-    write_entity_events(flight, &mapping.entities, w)?;
+    write_entity_events(flight, &id_map.entities, w)?;
 
     assert_eq!(w.get_posit(), header.general_event_offset);
     write_general_events(flight, &header, w)?;
@@ -209,12 +210,14 @@ pub fn write<W: Write>(flight: &Flight, w: W) -> Result<u32> {
     write_feature_events(flight, &feature_indexes, w)?;
 
     assert_eq!(w.get_posit(), header.text_event_offset);
-    write_callsigns(flight, &mapping.callsign_ids, w)?;
+    write_callsigns(flight, &id_map.callsign_ids, w)?;
 
     assert_eq!(w.get_posit(), header.file_length);
 
     w.flush()?;
-    Ok(w.get_posit())
+    mapped.flush()?;
+
+    Ok(header.file_length)
 }
 
 /// Lots of sizes and offsets we need to write to the file header,

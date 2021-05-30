@@ -135,8 +135,12 @@ fn open_flt(f: &Path) -> Result<memmap::Mmap> {
 }
 
 fn open_vhs(to: &Path) -> Result<File> {
-    let fh =
-        File::create(to).with_context(|| format!("Couldn't open {} to write", to.display()))?;
+    let fh = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(to)
+        .with_context(|| format!("Couldn't open {} to write", to.display()))?;
     Ok(fh)
 }
 
