@@ -32,6 +32,9 @@ from one format (FLT) to another (VHS).
 As of version 4.35U1, BMS's conversion is painfully slow.
 For 30+ minute flights with lots of planes and vehicles moving around,
 the conversion takes several minutes, during which you stare at a black screen.
+It also chunks recordings into multiple files if they were larger than 1 GB,
+and Tacview (as of 1.8.6) sometimes has trouble merging these, leaving "ghost"
+planes hanging in the air where one file ended and the next began.
 
 ## What?
 
@@ -43,18 +46,23 @@ Since 2017, Loitho has provided a third-party tool called
 
 2. Performs the FLT -> VHS conversion itself in seconds.
 
-These project does much of the same, but with major improvments:
+This project does much of the same, but with several improvements:
 
 1. **Nothing to run in the background:** Instead of running a background program
    to steal FLT files from BMS, flt2vhs ships with a tool (`patch-bms-novhs`)
    that just disables BMS's slow conversion.
 
-2. **Even better performance:**
+2. **Automatic merging:** flt2vhs can merge multiple FLT files into a single VHS.
+   This feature is still in the experimental stage but seems to work well
+   so far, even in 20+ player events with hundreds of units moving around.
+
+3. **Even better performance:**
 
     - flt2vhs [memory maps](https://en.wikipedia.org/wiki/Memory-mapped_file#Benefits)
-      the FLT file. This improves performance by reading directly out of the
-      operating system's page cache instead of copying file data with each
-      `read()` [system call](https://en.wikipedia.org/wiki/System_call).
+      the FLT files it reads and the VHS files it writes.
+      This improves performance by working directly with the operating system's
+      page cache instead of copying file data with each `read()` and `write()`
+      [system call](https://en.wikipedia.org/wiki/System_call).
 
     - ACMI-Compiler stores events in a series of large arrays, very similar to
       how they are stored in the VHS file. This simplifies actually writing the VHS,
@@ -70,19 +78,16 @@ These project does much of the same, but with major improvments:
       Less data means the program is more cache-friendly, which is one of the
       [most important ways you can improve performance on modern systems.](https://www.youtube.com/watch?v=0_Byw9UMn9g)
 
-    These design choices make flt2vhs very fast - about 30% faster than
-    ACMI-Compiler according to initial benchmarks.
-    Once the FLT file is parsed, only a few tenths of a second are spent
-    computing the VHS output, and the rest of the time is spent waiting for the
-    OS to put the file on the disk.
+    These design choices make flt2vhs very fast - nearly twice as fast as
+    ACMI-Compiler. Most of the time is spent waiting for the OS to put the
+    file on the disk!
 
 Additionally,
 
 1. In the spirit of the [Unix philosophy](https://en.wikipedia.org/wiki/Unix_philosophy),
    "make each program do one thing well", functionality is split into a couple programs:
    `patch-bms-novhs` patches BMS, `flt2vhs` handles the actual FLT to VHS conversion,
-   and `convert-all-flts` runs `flt2vhs` on each FLT file in the directory
-   (including any in-progress ones from BMS).
+   and `convert-all-flts` runs `flt2vhs` on each FLT file in the directory.
    A tool to print VHS files as JSON, `vhscat`, is also provided for debugging.
 
 2. Everything but `convert-all-flts` is entirely cross-platform and can be
