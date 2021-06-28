@@ -28,6 +28,11 @@ struct Args {
     input: Option<PathBuf>,
 }
 
+enum BmsExeVersion {
+    Ver4_35_1,
+    Ver4_35_2,
+}
+
 struct Patch {
     offset: usize,
     original: &'static [u8],
@@ -47,22 +52,40 @@ fn run() -> Result<()> {
 
     let bms_path = find_bms(args.input)?;
     let mut map = open_bms(&bms_path)?;
-    ensure_bms(&map)?;
+    let bms_version = find_bms_version(&map)?;
 
-    const REPLACEMENT_NOP: &[u8] = &[0x0f, 0x1f, 0x44, 0x00, 0x00]; // lea eax, eax * 1 + 0
+    const REPLACEMENT_NOP: &[u8] = &[0x0F, 0x1F, 0x44, 0x00, 0x00]; // lea eax, eax * 1 + 0
 
-    let patches = vec![
+    let patches_435u1 = vec![
         Patch {
-            offset: 0x00022544,
-            original: &[0xe8, 0x87, 0x55, 0x00, 0x00],
+            offset: 0x0002_2544,
+            original: &[0xE8, 0x87, 0x55, 0x00, 0x00],
             replacement: REPLACEMENT_NOP,
         },
         Patch {
-            offset: 0x004dcf68,
-            original: &[0xe8, 0x63, 0xab, 0xb4, 0xff],
+            offset: 0x004D_CF68,
+            original: &[0xE8, 0x63, 0xAB, 0xB4, 0xFF],
             replacement: REPLACEMENT_NOP,
         },
     ];
+
+    let patches_435u2 = vec![
+        Patch {
+            offset: 0x0001_CA12,
+            original: &[0xE8, 0x99, 0x55, 0x00, 0x00],
+            replacement: REPLACEMENT_NOP,
+        },
+        Patch {
+            offset: 0x004F_B5C8,
+            original: &[0xE8, 0xE3, 0x69, 0xB2, 0xFF],
+            replacement: REPLACEMENT_NOP,
+        },
+    ];
+
+    let patches = match bms_version {
+        BmsExeVersion::Ver4_35_1 => patches_435u1,
+        BmsExeVersion::Ver4_35_2 => patches_435u2,
+    };
 
     for patch in &patches {
         patch_call(&mut map, patch, args.restore)?;
@@ -181,10 +204,10 @@ fn open_bms(bms: &Path) -> Result<memmap::MmapMut> {
     Ok(mapping)
 }
 
-fn ensure_bms(map: &[u8]) -> Result<()> {
+fn find_bms_version(map: &[u8]) -> Result<BmsExeVersion> {
     use pelite::pe64::{Pe, PeFile};
 
-    info!("Verifying we're looking at BMS 4.35U1");
+    info!("Determining BMS version.");
 
     let bin = PeFile::from_bytes(map).context("Couldn't load file as an EXE")?;
 
@@ -204,18 +227,35 @@ fn ensure_bms(map: &[u8]) -> Result<()> {
         product_name
     );
 
-    let version = version_info
+    const SUPPORTED_VERSIONS: &'static [&'static str] = &["4.35.1", "4.35.2"];
+    let version_field = version_info
         .value(lang, "ProductVersion")
         .ok_or_else(|| anyhow!("Couldn't get EXE version"))?;
+    let vs = version_field.as_str();
+
+    info!("Version detecteed: {}", version_field);
     ensure!(
-        version == "4.35.1",
-        "Only BMS 4.35.1 is currently supported, got {}",
-        version
+        SUPPORTED_VERSIONS.contains(&vs),
+        "Detected BMS version {} not supported. Supported versions are {:?}",
+        vs,
+        SUPPORTED_VERSIONS
     );
 
+    let version = match vs {
+        "4.35.1" => BmsExeVersion::Ver4_35_1,
+        "4.35.2" => BmsExeVersion::Ver4_35_2,
+        _ => unreachable!(format!("version that was detected {} is invalid", vs)),
+    };
+
+    let expected_exe_size = match version {
+        BmsExeVersion::Ver4_35_1 => 81105920,
+        BmsExeVersion::Ver4_35_2 => 164310528,
+    };
+
     ensure!(
-        map.len() == 81105920,
-        "EXE isn't the right size - are you sure this is BMS 4.35U1?"
+        map.len() == expected_exe_size,
+        "EXE isn't the right size - are you sure this is BMS version {}",
+        vs
     );
-    Ok(())
+    Ok(version)
 }
