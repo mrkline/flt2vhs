@@ -227,7 +227,7 @@ fn find_bms_version(map: &[u8]) -> Result<BmsExeVersion> {
         product_name
     );
 
-    const SUPPORTED_VERSIONS: &'static [&'static str] = &["4.35.1", "4.35.2"];
+    const SUPPORTED_VERSIONS: &[&str] = &["4.35.1", "4.35.2"];
     let version_field = version_info
         .value(lang, "ProductVersion")
         .ok_or_else(|| anyhow!("Couldn't get EXE version"))?;

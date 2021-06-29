@@ -171,8 +171,8 @@ pub fn write(flight: &Flight, fh: std::fs::File) -> Result<u32> {
     // Set the file length and map it for writing.
     fh.set_len(header.file_length as u64)
         .context("Couldn't grow output file")?;
-    let mut mapped = unsafe { memmap::MmapMut::map_mut(&fh) }
-        .with_context(|| format!("Couldn't memory map output file"))?;
+    let mut mapped =
+        unsafe { memmap::MmapMut::map_mut(&fh) }.context("Couldn't memory map output file")?;
 
     // We know in advance how large each section of the file will be - we did
     // that math to build the header. Slice the file mapping into mutable slices
