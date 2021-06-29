@@ -81,11 +81,15 @@ fn rename_and_convert(args: &Args) -> Result<()> {
         }
     }
 
-    let renamed_flights = to_rename
+    let mut renamed_flights = to_rename
         .iter()
         .map(|f| rename_flt(f))
         .collect::<Result<Vec<_>>>()?;
 
+    // Make sure we pass files in sorted order. This should ensure
+    // <timestamp>-acmi0000.flt comes before <timestamp>-acmi0001.flt, etc.,
+    // which should ensure we merge files in the correct order.
+    renamed_flights.sort();
     convert_flts(args, &renamed_flights)?;
     Ok(())
 }
