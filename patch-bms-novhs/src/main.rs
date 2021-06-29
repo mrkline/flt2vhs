@@ -117,29 +117,37 @@ fn patch_call(map: &mut [u8], patch: &Patch, restore: bool) -> Result<()> {
     if restore {
         if call_to_nop == patch.original {
             debug!(
-                "ACMI_ImportFile call at {:x} is unmodified; nothing to do!",
+                "ACMI_ImportFile call at {:08X} is unmodified; nothing to do!",
                 patch.offset
             );
         } else if call_to_nop == patch.replacement {
-            debug!("Restoring call to ACMI_ImportFile at {:x}", patch.offset);
+            debug!("Restoring call to ACMI_ImportFile at {:08X}", patch.offset);
             call_to_nop.copy_from_slice(patch.original);
         } else {
-            bail!("Unexpected bytes at {:x}: {:x?}", patch.offset, call_to_nop);
+            bail!(
+                "Unexpected bytes at {:X}: {:08X?}",
+                patch.offset,
+                call_to_nop
+            );
         }
     } else {
         if call_to_nop == patch.original {
             debug!(
-                "Replacing call to ACMI_ImportFile at {:x} with no-op",
+                "Replacing call to ACMI_ImportFile at {:08X} with no-op",
                 patch.offset
             );
             call_to_nop.copy_from_slice(patch.replacement);
         } else if call_to_nop == patch.replacement {
             debug!(
-                "ACMI_ImportFile call at {:x} is already no-op'd; nothing to do!",
+                "ACMI_ImportFile call at {:08X} is already no-op'd; nothing to do!",
                 patch.offset
             );
         } else {
-            bail!("Unexpected bytes at {:x}: {:x?}", patch.offset, call_to_nop);
+            bail!(
+                "Unexpected bytes at {:08X}: {:x?}",
+                patch.offset,
+                call_to_nop
+            );
         }
     }
     Ok(())
