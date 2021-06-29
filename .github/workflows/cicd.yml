@@ -1,0 +1,107 @@
+on: 
+  pull_request: 
+    branches:
+    - master
+  push: 
+    branches: 
+    - master
+
+jobs:
+  format:
+    name: Apply fmt
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            components: rustfmt
+            override: true
+      - uses: mbrobbel/rustfmt-check@master
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+  clippy_check:
+    name: Clippy check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - run: rustup component add clippy
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
+
+  # build-cross:
+  #   name: Builds via cross-compiling
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout sources
+  #       uses: actions/checkout@v2
+
+  #     - name: Install stable toolchain
+  #       uses: actions-rs/toolchain@v1
+  #       with:
+  #         profile: minimal
+  #         toolchain: stable
+  #         override: true
+
+  #     - name: Install mingw
+  #       run: sudo apt-get install mingw-w64
+
+  #     - name: Build generic win32 binary
+  #       env:
+  #         RUSTFLAGS: -C target-cpu=generic
+  #       run: |
+  #         rustup target add x86_64-pc-windows-gnu
+  #         cargo build --target x86_64-pc-windows-gnu
+
+  build-windows:
+    name: Builds natively on windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Build generic win32 binary
+        env:
+          RUSTFLAGS: -C target-cpu=generic
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo build --target x86_64-pc-windows-msvc
+      - name: Upload binaries
+        uses: actions/upload-artifact@v2
+        with:
+          name: MSVC Executables + pdb
+          path: |
+            target/x86_64-pc-windows-msvc/debug/*.exe
+            target/x86_64-pc-windows-msvc/debug/*.pdb
+          if-no-files-found: warn
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Zip for release
+        uses: edgarrc/action-7z@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+        with:
+          args: 7z a -t7z -mx=9 flt2vhs-$RELEASE_VERSION.7z target/x86_64-pc-windows-msvc/debug/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files:
+            flt2vhs-$RELEASE_VERSION.7z
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # uncomment below to enable debugging!
+      # - name: Setup tmate
+      #   uses: mxschmitt/action-tmate@v3
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
