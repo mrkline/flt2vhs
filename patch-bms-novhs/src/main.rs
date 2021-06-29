@@ -262,7 +262,7 @@ fn find_bms_version(map: &[u8]) -> Result<BmsExeVersion> {
 
     ensure!(
         map.len() == expected_exe_size,
-        "EXE isn't the right size - are you sure this is BMS version {}",
+        "EXE isn't the right size - are you sure this is BMS version {}?",
         vs
     );
     Ok(version)
