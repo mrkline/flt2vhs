@@ -26,7 +26,7 @@ jobs:
     name: Clippy check
     runs-on: ubuntu-latest
     steps:
-      - uses: acti  ons/checkout@v1
+      - uses: actions/checkout@v1
       - run: rustup component add clippy
       - uses: actions-rs/clippy-check@v1
         with:
@@ -78,7 +78,7 @@ jobs:
       - name: Upload binaries
         uses: actions/upload-artifact@v2
         with:
-          name: MSVC Executables + pdb
+          name: MSVC executables
           path: |
             target/x86_64-pc-windows-msvc/debug/*.exe
             target/x86_64-pc-windows-msvc/debug/*.pdb
