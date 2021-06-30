@@ -20,17 +20,18 @@ jobs:
       - uses: mbrobbel/rustfmt-check@master
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+      - if: github.event_name == 'pull_request'
   clippy_check:
     name: Clippy check
     runs-on: ubuntu-latest
     steps:
-      - if: github.event_name == 'pull_request'
-      - uses: actions/checkout@v1
+      - uses: acti  ons/checkout@v1
       - run: rustup component add clippy
       - uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           args: --all-features
+      - if: github.event_name == 'pull_request'
 
   # build-cross:
   #   name: Builds via cross-compiling
