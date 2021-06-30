@@ -83,10 +83,12 @@ jobs:
           if-no-files-found: warn
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Get version tag if applicable
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+        if: startsWith(github.ref, 'refs/tags/')
       - name: Zip for release
         uses: edgarrc/action-7z@v1
         if: startsWith(github.ref, 'refs/tags/')
-        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
         with:
           args: 7z a -t7z -mx=9 flt2vhs-$RELEASE_VERSION.7z target/x86_64-pc-windows-msvc/debug/*.exe
         env:
