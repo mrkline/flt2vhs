@@ -24,6 +24,7 @@ jobs:
     name: Clippy check
     runs-on: ubuntu-latest
     steps:
+      - if: github.event_name == 'pull_request'
       - uses: actions/checkout@v1
       - run: rustup component add clippy
       - uses: actions-rs/clippy-check@v1
