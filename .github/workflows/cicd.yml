@@ -24,7 +24,7 @@ jobs:
   clippy_check:
     if: github.event_name == 'pull_request'
     name: Clippy check
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v1
       - run: rustup component add clippy
@@ -95,14 +95,28 @@ jobs:
           args: 7z a -t7z -mx=9 flt2vhs-$RELEASE_VERSION.7z target/x86_64-pc-windows-msvc/debug/*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
       - name: Create release
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
+        uses: ncipollo/release-action@v1
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files:
-            flt2vhs-$RELEASE_VERSION.7z
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: "flt2vhs-${{env.RELEASE_VERSION}}.7z"
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: false
+          name: "Version ${{env.RELEASE_VERSION}}" 
+          tag: v${{env.RELEASE_VERSION}}
+
+
+      # - name: Create release
+      #   uses: softprops/action-gh-release@v1
+      #   if: startsWith(github.ref, 'refs/tags/')
+      #   with:
+      #     files:
+      #       flt2vhs-$RELEASE_VERSION.7z
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # uncomment below to enable debugging!
       # - name: Setup tmate
