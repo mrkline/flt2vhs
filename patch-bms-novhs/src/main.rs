@@ -244,7 +244,7 @@ fn find_bms_version(map: &[u8]) -> Result<BmsExeVersion> {
     info!("Version detecteed: {}", version_field);
     ensure!(
         SUPPORTED_VERSIONS.contains(&vs),
-        "Detected BMS version {} not supported. Supported versions are {:?}",
+        "Detected BMS version {} not supported. Supported versions are {:?}.",
         vs,
         SUPPORTED_VERSIONS
     );
@@ -252,7 +252,7 @@ fn find_bms_version(map: &[u8]) -> Result<BmsExeVersion> {
     let version = match vs {
         "4.35.1" => BmsExeVersion::Ver4_35_1,
         "4.35.2" => BmsExeVersion::Ver4_35_2,
-        _ => unreachable!(format!("version that was detected {} is invalid", vs)),
+        _ => unreachable!(format!("version that was detected {} is invalid.", vs)),
     };
 
     let expected_exe_size = match version {
