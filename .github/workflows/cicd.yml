@@ -93,7 +93,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
       - name: Test environment variable
         run: |
-          echo $RELEASE_VERSION
           echo ${{ env.RELEASE_VERSION }}
         if: startsWith(github.ref, 'refs/tags/')
       - name: Zip for release
