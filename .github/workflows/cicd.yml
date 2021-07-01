@@ -89,20 +89,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Get version tag if applicable
+        id: release-version
         run: |
           $tag = $env:GITHUB_REF.split("/")[-1].substring(1)
-          echo "RELEASE_VERSION=$tag" Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "::set-output name=RELEASE_VERSION::$tag"
         if: startsWith(github.ref, 'refs/tags/')
       - name: Test environment variable
         run: |
-          echo "::debug::Testing ~~~~~~~~ $env:RELEASE_VERSION"
+          echo "::debug::Testing ~~~~~~~~ ${{ steps.release-version.outputs.RELEASE_VERSION }}"
         if: startsWith(github.ref, 'refs/tags/')
       - name: Zip for release
         uses: DuckSoft/create-7z-action@v1.0
         if: startsWith(github.ref, 'refs/tags/')
         with:
           pathSource: target/x86_64-pc-windows-msvc/debug/*.exe
-          pathTarget: flt2vhs-${{ env.RELEASE_VERSION }}.7z
+          pathTarget: flt2vhs-${{ steps.release-version.outputs.RELEASE_VERSION }}.7z
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -110,13 +111,13 @@ jobs:
         uses: ncipollo/release-action@v1
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          artifacts: "flt2vhs-${{ env.RELEASE_VERSION }}.7z"
+          artifacts: "flt2vhs-${{ steps.release-version.outputs.RELEASE_VERSION }}.7z"
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
           draft: false
           prerelease: false
-          name: "Version ${{ env.RELEASE_VERSION }}" 
-          tag: v${{ env.RELEASE_VERSION }}
+          name: "Version ${{ steps.release-version.outputs.RELEASE_VERSION }}" 
+          tag: v${{ steps.release-version.outputs.RELEASE_VERSION }}
 
 
       # - name: Create release
