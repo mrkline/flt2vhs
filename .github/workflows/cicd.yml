@@ -92,10 +92,11 @@ jobs:
         run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
         if: startsWith(github.ref, 'refs/tags/')
       - name: Zip for release
-        uses: edgarrc/action-7z@v1
+      - uses: DuckSoft/create-7z-action@v1.0
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          args: 7z a -t7z -mx=9 flt2vhs-$RELEASE_VERSION.7z target/x86_64-pc-windows-msvc/debug/*.exe
+          pathSource: target/x86_64-pc-windows-msvc/debug/*.exe
+          pathDest: flt2vhs-$RELEASE_VERSION.7z
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
