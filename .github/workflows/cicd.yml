@@ -96,13 +96,16 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
       - name: Test environment variable
         run: |
-          echo "::debug::Testing ~~~~~~~~ ${{ steps.release-version.outputs.RELEASE_VERSION }}"
+          echo "::debug:: New tag version: ${{ steps.release-version.outputs.RELEASE_VERSION }}"
         if: startsWith(github.ref, 'refs/tags/')
+      - name: Prepare exe paths
+        run: |
+          cp target/x86_64-pc-windows-msvc/debug/*.exe ./
       - name: Zip for release
         uses: DuckSoft/create-7z-action@v1.0
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          pathSource: target/x86_64-pc-windows-msvc/debug/*.exe
+          pathSource: ./*.exe
           pathTarget: flt2vhs-${{ steps.release-version.outputs.RELEASE_VERSION }}.7z
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -112,6 +115,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           artifacts: "flt2vhs-${{ steps.release-version.outputs.RELEASE_VERSION }}.7z"
+          # this will allow a manually-created release/tag to be updated with the new build artifacts
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
           draft: false
