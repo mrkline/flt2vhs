@@ -112,8 +112,8 @@ impl Flight {
         let next_flight_path = next_flight_path.display();
 
         debug!(
-            "Considering if {} and {} should be merged...",
-            previous_flight_path, next_flight_path
+               "Considering if {} and {} should be merged...",
+               previous_flight_path, next_flight_path
         );
 
         if self.corrupted {
