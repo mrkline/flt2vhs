@@ -28,8 +28,6 @@ pub struct Flight {
     pub end_time: f32,
 
     /// Map entity & feature UIDs to callsigns (16 byte blocks for strings) and faction colors.
-    ///
-    /// Use an ordered map to quickly inflate it back to an array on VHS write.
     pub callsigns: FxHashMap<i32, CallsignRecord>,
 
     /// A map of unique IDs for entities (all moving objects in game)
@@ -732,7 +730,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             let callsign_array = parse_callsigns(r)?;
 
             // Callsigns are always written at the end,
-            // so we can safely assume entity and feature maps are filled out.
+            // so we can safely assume the entity map is filled out.
             for entity_key in flight.entities.keys() {
                 let index = *entity_key as usize;
                 if index >= callsign_array.len() {
