@@ -93,7 +93,8 @@ impl IdMapping {
             .collect::<Vec<(i32, IdType)>>();
 
         // Sort it so that IDs _with_ callsign info come first...
-        // Unstable sorts are fine - we have bigger problems if IDs aren't unique.
+        // Unstable sorts are fine - each entry should always be a unique (ID, type)
+        // tuple, even in the sad scenario where a feature and an entity share IDs.
         all_ids.par_sort_unstable_by(|(left, left_kind), (right, right_kind)| {
             use std::cmp::Ordering;
             match (
@@ -166,7 +167,7 @@ pub fn write(flight: &Flight, fh: std::fs::File) -> Result<u32> {
     let id_map = IdMapping::new(flight);
 
     // Build the header, which will give us an idea of how big the file will be.
-    let header = Header::new(flight);
+    let header = Header::new(flight, id_map.callsign_ids.len());
 
     // Set the file length and map it for writing.
     fh.set_len(header.file_length as u64)
@@ -289,7 +290,7 @@ struct Header {
 }
 
 impl Header {
-    fn new(flight: &Flight) -> Self {
+    fn new(flight: &Flight, num_callsigns: usize) -> Self {
         let entity_count = flight.entities.len() as u32;
         let feature_count = flight.features.len() as u32;
         let entity_position_count = flight
@@ -331,7 +332,7 @@ impl Header {
         let text_event_offset =
             feature_event_offset + FEATURE_EVENT_SIZE * flight.feature_events.len() as u32;
 
-        let callsign_array_len = flight.callsigns.len() as u32;
+        let callsign_array_len = num_callsigns as u32;
 
         let file_length = text_event_offset + 4 + CALLSIGN_RECORD_SIZE * callsign_array_len;
 
@@ -750,9 +751,7 @@ fn write_feature_events<W: Write>(
 }
 
 fn write_callsigns<W: Write>(flight: &Flight, callsign_ids: &[i32], w: &mut W) -> Result<()> {
-    assert_eq!(callsign_ids.len(), flight.callsigns.len());
-
-    if flight.callsigns.is_empty() {
+    if callsign_ids.is_empty() {
         warn!("No callsigns to save!");
         write_u32(0, w)?;
         return Ok(());

@@ -730,18 +730,7 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
             let callsign_array = parse_callsigns(r)?;
 
             // Callsigns are always written at the end,
-            // so we can safely assume the entity map is filled out.
-            for entity_key in flight.entities.keys() {
-                let index = *entity_key as usize;
-                if index >= callsign_array.len() {
-                    continue;
-                }
-                let callsign = callsign_array[index];
-                if callsign == CallsignRecord::default() {
-                    continue;
-                }
-                assert!(flight.callsigns.insert(*entity_key, callsign).is_none());
-            }
+            // so we can safely assume the entity and feature maps are filled out.
 
             for feature_key in flight.features.keys() {
                 let index = *feature_key as usize;
@@ -753,6 +742,35 @@ fn read_record<R: Read>(flight: &mut Flight, r: &mut R) -> Result<bool> {
                     continue;
                 }
                 assert!(flight.callsigns.insert(*feature_key, callsign).is_none());
+            }
+
+            for entity_key in flight.entities.keys() {
+                let index = *entity_key as usize;
+                if index >= callsign_array.len() {
+                    continue;
+                }
+                let callsign = callsign_array[index];
+                if callsign == CallsignRecord::default() {
+                    continue;
+                }
+
+                // We're inserting entities second so that if features and entities
+                // share "unique" IDs, and callsign data _doesn't_ match,
+                // we defer to the entity's.
+                // We probably care about it being correct more than a static feature.
+                let previous = flight.callsigns.insert(*entity_key, callsign);
+                if let Some(p) = previous {
+                    warn!(
+                        r#"FLT file contains an entity and a feature that share a "unique" ID of {}..."#,
+                        *entity_key
+                    );
+                    if callsign != p {
+                        warn!(
+                            "...and the callsign data doesn't match: {:?}, {:?}",
+                            callsign, p
+                        );
+                    }
+                }
             }
         }
         wut => {
