@@ -200,6 +200,13 @@ pub fn write(flight: &Flight, fh: std::fs::File) -> Result<u32> {
         feature_indexes.insert(id, i as i32);
     }
 
+    let mut errors: Vec<anyhow::Error> = Vec::new();
+    let mut append_error = |result: Option<anyhow::Error>| {
+        if let Some(e) = result {
+            errors.push(e);
+        }
+    };
+
     // Parallelize ALL the writes!
     // We'll unwrap the results of any write failures because:
     //
@@ -207,17 +214,17 @@ pub fn write(flight: &Flight, fh: std::fs::File) -> Result<u32> {
     //
     // 2. We've allocated the whole file already and mapped it to memory.
     //    Something truly bizarre is happening if a write fails.
-    rayon::scope(|s| {
-        s.spawn(|_| {
+    crossbeam_utils::thread::scope(|s| {
+        let header_write = s.spawn(|_| {
             header
                 .write(flight, &mut header_slice)
-                .expect("Header write failed")
+                .context("Header write failed")
         });
 
-        s.spawn(|_| {
+        let entities = s.spawn(|_| {
             let feature_position_offset =
                 write_entities(flight, &id_map.entities, &header, &mut entity_slice)
-                    .expect("Entity write failed");
+                    .context("Entity write failed")?;
 
             write_features(
                 flight,
@@ -227,43 +234,61 @@ pub fn write(flight: &Flight, fh: std::fs::File) -> Result<u32> {
                 &header,
                 &mut feature_slice,
             )
-            .expect("Feature write failed");
+            .context("Feature write failed")
         });
 
-        s.spawn(|_| {
+        let positions = s.spawn(|_| {
             let mut position_write = CountedWrite::new(position_slice, header.position_offset);
             write_entity_positions(flight, &id_map.entities, &mut position_write)
-                .expect("Entity positions write failed");
+                .context("Entity positions write failed")?;
             write_feature_positions(flight, &id_map.features, &mut position_write)
-                .expect("Feature position write failed");
+                .context("Feature position write failed")?;
             assert_eq!(position_write.get_posit(), header.entity_event_offset);
+            Ok(())
         });
 
-        s.spawn(|_| {
+        let entity_events = s.spawn(|_| {
             let mut entity_events_write =
                 CountedWrite::new(entity_events_slice, header.entity_event_offset);
             write_entity_events(flight, &id_map.entities, &mut entity_events_write)
-                .expect("Entity events write failed");
+                .context("Entity events write failed")?;
             assert_eq!(entity_events_write.get_posit(), header.general_event_offset);
+            Ok(())
         });
 
-        s.spawn(|_| {
+        let general_events = s.spawn(|_| {
             write_general_events(flight, &mut general_events_slice)
-                .expect("General events write failed")
+                .context("General events write failed")
         });
 
-        s.spawn(|_| {
+        let feature_events = s.spawn(|_| {
             write_feature_events(flight, &feature_indexes, &mut feature_events_slice)
-                .expect("Feature events write failed")
+                .context("Feature events write failed")
         });
 
-        s.spawn(|_| {
+        let callsigns = s.spawn(|_| {
             write_callsigns(flight, &id_map.callsign_ids, &mut callsigns_slice)
-                .expect("Callsigns write failed")
+                .context("Callsigns write failed")
         });
-    });
+
+        append_error(header_write.join().unwrap().err());
+        append_error(entities.join().unwrap().err());
+        append_error(positions.join().unwrap().err());
+        append_error(entity_events.join().unwrap().err());
+        append_error(general_events.join().unwrap().err());
+        append_error(feature_events.join().unwrap().err());
+        append_error(callsigns.join().unwrap().err());
+    })
+    .unwrap();
 
     mapped.flush()?;
+
+    if !errors.is_empty() {
+        for e in errors {
+            error!("{:?}", e);
+        }
+        bail!("VHS write failed");
+    }
 
     Ok(header.file_length)
 }

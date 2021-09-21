@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0"
+crossbeam-utils = "0.8"
 humansize = "1.0"
 log = "0.4"
 logsetup = { path = "../logsetup" }

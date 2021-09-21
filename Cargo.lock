@@ -155,6 +155,7 @@ name = "flt2vhs"
 version = "0.11.0"
 dependencies = [
  "anyhow",
+ "crossbeam-utils",
  "humansize",
  "log",
  "logsetup",
