@@ -95,7 +95,7 @@ fn rename_and_convert(args: &Args) -> Result<()> {
 }
 
 fn rename_flt(to_rename: &Path) -> Result<PathBuf> {
-    let rename_to = timestamp_name(&to_rename);
+    let rename_to = timestamp_name(to_rename);
     debug!("Trying to rename {}...", to_rename.display());
     fs::rename(&to_rename, &rename_to)
         .with_context(|| format!("Renaming {} failed", to_rename.display()))?;

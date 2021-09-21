@@ -68,7 +68,7 @@ fn run() -> Result<()> {
         .map(|input| {
             info!("Parsing {}", input.display());
 
-            let mapping = open_flt(&input)?;
+            let mapping = open_flt(input)?;
             let parsed_flight = flt::Flight::parse(&*mapping);
             drop(mapping);
 
@@ -187,7 +187,7 @@ fn write_flight(inputs: &[PathBuf], flight: &flt::Flight, args: &Args) -> Result
 
     let write_start = Instant::now();
     let vhs = open_vhs(&output)?;
-    let vhs_size = vhs::write(&flight, vhs)?;
+    let vhs_size = vhs::write(flight, vhs)?;
     print_timing(
         &format!(
             "{} ({}) write",
