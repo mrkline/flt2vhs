@@ -12,5 +12,6 @@ atty = "0.2"
 structopt = "0.3.8"
 
 [dependencies.simplelog]
-version = "0.10"
+git = "https://github.com/mrkline/simplelog.rs"
+rev = "523355a2d12b0a9c052f4d9ce2e8a26ad00cf719"
 features = ["test", "termcolor"]
