@@ -441,7 +441,8 @@ dependencies = [
 [[package]]
 name = "simplelog"
 version = "0.10.2"
-source = "git+https://github.com/mrkline/simplelog.rs?rev=523355a2d12b0a9c052f4d9ce2e8a26ad00cf719#523355a2d12b0a9c052f4d9ce2e8a26ad00cf719"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85d04ae642154220ef00ee82c36fb07853c10a4f2a0ca6719f9991211d2eb959"
 dependencies = [
  "chrono",
  "log",
