@@ -92,8 +92,8 @@ fn run() -> Result<()> {
         Patch {
             offset: 0x004B_41B9,
             original: &[0xE8, 0x12, 0xE5, 0xB6, 0xFF],
-            replacement: REPLACEMENT_NOP
-        }
+            replacement: REPLACEMENT_NOP,
+        },
     ];
 
     let patches = match bms_version {
