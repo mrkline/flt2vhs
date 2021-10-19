@@ -31,6 +31,7 @@ struct Args {
 enum BmsExeVersion {
     Ver4_35_1,
     Ver4_35_2,
+    Ver4_35_3,
 }
 
 struct Patch {
@@ -82,9 +83,23 @@ fn run() -> Result<()> {
         },
     ];
 
+    let patches_435u3 = vec![
+        Patch {
+            offset: 0x0001_EC33,
+            original: &[0xE8, 0x98, 0x3A, 0x00, 0x00],
+            replacement: REPLACEMENT_NOP,
+        },
+        Patch {
+            offset: 0x004B_41B9,
+            original: &[0xE8, 0x12, 0xE5, 0xB6, 0xFF],
+            replacement: REPLACEMENT_NOP
+        }
+    ];
+
     let patches = match bms_version {
         BmsExeVersion::Ver4_35_1 => patches_435u1,
         BmsExeVersion::Ver4_35_2 => patches_435u2,
+        BmsExeVersion::Ver4_35_3 => patches_435u3,
     };
 
     for patch in &patches {
@@ -235,7 +250,7 @@ fn find_bms_version(map: &[u8]) -> Result<BmsExeVersion> {
         product_name
     );
 
-    const SUPPORTED_VERSIONS: &[&str] = &["4.35.1", "4.35.2"];
+    const SUPPORTED_VERSIONS: &[&str] = &["4.35.1", "4.35.2", "4.35.3"];
     let version_field = version_info
         .value(lang, "ProductVersion")
         .ok_or_else(|| anyhow!("Couldn't get EXE version"))?;
@@ -252,12 +267,14 @@ fn find_bms_version(map: &[u8]) -> Result<BmsExeVersion> {
     let version = match vs {
         "4.35.1" => BmsExeVersion::Ver4_35_1,
         "4.35.2" => BmsExeVersion::Ver4_35_2,
+        "4.35.3" => BmsExeVersion::Ver4_35_3,
         _ => unreachable!(format!("version that was detected {} is invalid", vs)),
     };
 
     let expected_exe_size = match version {
         BmsExeVersion::Ver4_35_1 => 81105920,
         BmsExeVersion::Ver4_35_2 => 164310528,
+        BmsExeVersion::Ver4_35_3 => 12672512,
     };
 
     ensure!(
