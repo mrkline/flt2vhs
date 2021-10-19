@@ -16,6 +16,9 @@ in seconds, not minutes.
    or by running BMS with `-acmi`. BMS should no longer pause to convert
    recordings when you exit 3D.
 
+4. Close BMS (if you're running with `-acmi`, BMS often holds tiny
+   FLT files open in 2D, preventing these tools from doing their jobs.)
+
 4. Run `convert-all-flts.exe` to convert all FLT files to VHS,
    with names based on the times they were created.
    Or drag a FLT file file onto `flt2vhs.exe` to convert one at a time.

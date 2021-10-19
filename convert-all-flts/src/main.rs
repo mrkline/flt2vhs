@@ -65,7 +65,45 @@ fn run() -> Result<()> {
         })?;
     }
 
+    if !args.keep {
+        delete_garbage_files()?;
+    }
     rename_and_convert(&args)
+}
+
+fn delete_garbage_files() -> Result<()> {
+    let delete_fail_warning = |path: &Path, e| {
+        warn!(
+            "Couldn't remove {} (are you running BMS?): {}",
+            path.display(),
+            e
+        )
+    };
+
+    let cwd = env::current_dir()?;
+    for f in fs::read_dir(cwd)? {
+        let entry = f?;
+        let path = entry.path();
+        let meta = entry
+            .metadata()
+            .with_context(|| format!("Couldn't stat {}", path.display()))?;
+
+        if path.to_str().map(|s| s.ends_with(".flt.cnt")).unwrap_or(false) && meta.is_file() {
+            fs::remove_file(&path).unwrap_or_else(|e| delete_fail_warning(&path, e));
+            info!("Deleted {}", path.display());
+            continue;
+        }
+
+        // With -acmi, BMS 4.35 likes to spit out a bunch of tiny useless files in 2D.
+        if path.extension() == Some(OsStr::new("flt")) && meta.is_file() {
+            let length = meta.len();
+            if length <= 34 {
+                fs::remove_file(&path).unwrap_or_else(|e| delete_fail_warning(&path, e));
+                info!("Deleted tiny {}-byte garbage {}", length, path.display());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn rename_and_convert(args: &Args) -> Result<()> {
@@ -76,9 +114,14 @@ fn rename_and_convert(args: &Args) -> Result<()> {
         let entry = f?;
         let path = entry.path();
         if path.extension() == Some(OsStr::new("flt")) && entry.metadata()?.is_file() {
-            trace!("Found .flt file {}", path.display());
+            trace!("Found {} to rename and convert", path.display());
             to_rename.push(path);
         }
+    }
+
+    if to_rename.is_empty() {
+        info!("Nothing to convert!");
+        return Ok(());
     }
 
     let mut renamed_flights = to_rename
@@ -96,7 +139,6 @@ fn rename_and_convert(args: &Args) -> Result<()> {
 
 fn rename_flt(to_rename: &Path) -> Result<PathBuf> {
     let rename_to = timestamp_name(to_rename);
-    debug!("Trying to rename {}...", to_rename.display());
     fs::rename(&to_rename, &rename_to)
         .with_context(|| format!("Renaming {} failed", to_rename.display()))?;
     info!("Renamed {} to {}", to_rename.display(), rename_to.display());
